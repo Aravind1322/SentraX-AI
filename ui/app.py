@@ -9,6 +9,7 @@ from src.components.styles import load_styles
 from src.pages.home import render_home
 from src.pages.scanner import render_scanner
 from src.pages.sms import render_sms
+from src.pages.quick_scan import render_quick_scan
 from src.pages.dashboard import render_dashboard
 from src.pages.enterprise import render_enterprise
 from src.pages.about import render_about
@@ -27,15 +28,17 @@ st.sidebar.title("🛡️ SentraX AI")
 
 page = st.sidebar.radio(
     "Navigate",
-    ["🏠 Home", "🔍 Scanner", "📩 SMS", "📊 Dashboard", "🏢 Enterprise", "ℹ️ About"]
+    ["🏠 Home", "🌐 URL Scanner", "📩 SMS Scanner", "⚡ Quick Scan", "📊 Dashboard", "🏢 Enterprise", "ℹ️ About"]
 )
 
 if page == "🏠 Home":
     render_home()
-elif page == "🔍 Scanner":
+elif page == "🌐 URL Scanner":
     render_scanner()
-elif page == "📩 SMS":
+elif page == "📩 SMS Scanner":
     render_sms()
+elif page == "⚡ Quick Scan":
+    render_quick_scan()
 elif page == "📊 Dashboard":
     render_dashboard()
 elif page == "🏢 Enterprise":

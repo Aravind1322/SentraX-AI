@@ -106,3 +106,24 @@ def predict_sms(message: str):
         "score": score,
         "reasons": reasons
     }
+
+
+def score_fraud_row(row):
+    import pandas as pd
+    s = 10
+    if pd.to_numeric(row["amount"], errors="coerce") > 20000:
+        s += 25
+    if str(row["location"]).strip().lower() == "unknown":
+        s += 30
+    if str(row["device"]).strip().lower() == "new device":
+        s += 25
+    return min(s, 99)
+
+
+def get_fraud_status(score):
+    if score >= 70:
+        return "HIGH RISK"
+    elif score >= 40:
+        return "MEDIUM RISK"
+    else:
+        return "LOW RISK"
