@@ -3,6 +3,7 @@ import pandas as pd
 import re
 import io
 from src.utils.detector import score_fraud_row, get_fraud_status
+from src.utils.report_generator import generate_executive_pdf_report
 
 def get_login_hour(login_time_val):
     try:
@@ -110,6 +111,11 @@ def render_quick_scan():
         ds_mod = None
         result_df = pd.DataFrame()
         scan_time_val = pd.Timestamp.now()
+        
+        # Threat history and report metadata
+        threat_level = "LOW"
+        result_summary = ""
+        scan_type = ""
 
         # Fraud/Scam variables for rendering
         show_fraud_summary = False
@@ -262,6 +268,68 @@ def render_quick_scan():
             ])
             result_df["Scan Time"] = scan_time_val
 
+        # Database saving logic (excluding PDF previews)
+        if ds_type and ds_mod and not file_name.endswith('.pdf'):
+            threat_level = "LOW"
+            result_summary = ""
+            scan_type = ""
+
+            if ds_type == "Transaction Dataset":
+                scan_type = "Fraud"
+                if high_risk_count > 0:
+                    threat_level = "HIGH"
+                elif medium_risk_count > 0:
+                    threat_level = "MEDIUM"
+                else:
+                    threat_level = "LOW"
+                result_summary = f"Total Records: {total_records} | High Risk: {high_risk_count} | Medium Risk: {medium_risk_count} | Low Risk: {low_risk_count}"
+
+            elif ds_type == "URL Dataset":
+                scan_type = "URL"
+                susp = int((result_df["Status"] == "SUSPICIOUS").sum())
+                if susp > 0:
+                    threat_level = "HIGH"
+                else:
+                    threat_level = "LOW"
+                result_summary = f"Total URLs: {len(result_df)} | Suspicious: {susp} | Safe: {len(result_df) - susp}"
+
+            elif ds_type == "SMS Dataset":
+                scan_type = "SMS"
+                scam = int((result_df["Prediction"] == "SCAM").sum())
+                if scam > 0:
+                    threat_level = "HIGH"
+                else:
+                    threat_level = "LOW"
+                result_summary = f"Total Messages: {len(result_df)} | Scam: {scam} | Safe: {len(result_df) - scam}"
+
+            elif ds_type == "Employee Dataset":
+                scan_type = "Employee"
+                susp = int((result_df["Risk Level"] == "SUSPICIOUS").sum())
+                if susp > 0:
+                    threat_level = "MEDIUM"
+                else:
+                    threat_level = "LOW"
+                result_summary = f"Total Logs: {len(result_df)} | Suspicious: {susp} | Normal: {len(result_df) - susp}"
+
+            elif ds_type == "SMS Dataset (Plain Text)":
+                scan_type = "TXT"
+                scam = int((result_df["Prediction"] == "SCAM").sum())
+                if scam > 0:
+                    threat_level = "HIGH"
+                else:
+                    threat_level = "LOW"
+                result_summary = f"Total Lines: {len(result_df)} | Scam: {scam} | Safe: {len(result_df) - scam}"
+
+            if scan_type and result_summary:
+                scan_id = f"{uploaded_file.name}_{scan_type}_{result_summary}"
+                if st.session_state.get("last_saved_scan") != scan_id:
+                    try:
+                        from src.utils.database import save_history_scan
+                        save_history_scan(scan_type, uploaded_file.name, result_summary, threat_level)
+                        st.session_state["last_saved_scan"] = scan_id
+                    except Exception as e:
+                        pass
+
         # Display Auto Detection Results
         if ds_type and ds_mod:
             st.markdown(f"""
@@ -409,35 +477,51 @@ def render_quick_scan():
                     txt_report += result_df.to_string(index=False)
                 txt_bytes = txt_report.encode('utf-8')
 
-                try:
-                    pdf_bytes = generate_quick_scan_pdf(result_df, ds_type, ds_mod)
-                except Exception as pdf_gen_err:
-                    pdf_bytes = b"PDF Generation Error"
+                pdf_success = True
+                pdf_bytes = b""
+                
+                if not file_name.endswith('.pdf'):
+                    try:
+                        pdf_bytes = generate_executive_pdf_report(
+                            uploaded_file.name,
+                            scan_type,
+                            threat_level,
+                            result_summary
+                        )
+                    except Exception as pdf_gen_err:
+                        pdf_success = False
+                else:
+                    pdf_success = False
 
                 # Downloads layout
                 st.markdown("<p style='font-size: 12px; color: #63768f; margin-bottom: 5px;'>DOWNLOAD TELEMETRY REPORT:</p>", unsafe_allow_html=True)
-                dl1, dl2, dl3 = st.columns(3)
                 
-                dl1.download_button(
+                if not file_name.endswith('.pdf') and not pdf_success:
+                    st.error("Unable to generate Executive PDF report.")
+                
+                dl_cols = st.columns(3)
+                
+                dl_cols[0].download_button(
                     label="📥 Download CSV",
                     data=csv_data,
                     file_name="quick_scan_report.csv",
                     mime="text/csv",
                     use_container_width=True
                 )
-                dl2.download_button(
+                dl_cols[1].download_button(
                     label="📥 Download TXT",
                     data=txt_bytes,
                     file_name="quick_scan_report.txt",
                     mime="text/plain",
                     use_container_width=True
                 )
-                dl3.download_button(
-                    label="📥 Download PDF",
-                    data=pdf_bytes,
-                    file_name="quick_scan_report.pdf",
-                    mime="application/pdf",
-                    use_container_width=True
-                )
+                if not file_name.endswith('.pdf') and pdf_success:
+                    dl_cols[2].download_button(
+                        label="📄 Download Executive PDF Report",
+                        data=pdf_bytes,
+                        file_name="executive_threat_report.pdf",
+                        mime="application/pdf",
+                        use_container_width=True
+                    )
 
     st.markdown('</div>', unsafe_allow_html=True)

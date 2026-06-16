@@ -9,7 +9,7 @@ import streamlit as st
 import pandas as pd
 import altair as alt
 from datetime import datetime
-from src.utils.database import get_recent_scans
+from src.utils.database import get_recent_scans, get_history_scans
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -293,6 +293,107 @@ def _chart_top_risky(df: pd.DataFrame):
     return bars
 
 
+def _chart_history_threat_distribution(history_df: pd.DataFrame):
+    if history_df.empty:
+        return None
+    
+    counts = history_df["threat_level"].value_counts().reset_index()
+    counts.columns = ["threat_level", "count"]
+    
+    color_scale = alt.Scale(
+        domain=["LOW", "MEDIUM", "HIGH"],
+        range=["#00ff87", "#ffd60a", "#ff3b30"],
+    )
+    
+    chart = (
+        alt.Chart(counts)
+        .mark_bar(cornerRadiusTopLeft=3, cornerRadiusTopRight=3, size=35)
+        .encode(
+            x=alt.X("threat_level:N", sort=["LOW", "MEDIUM", "HIGH"], title="Threat Level"),
+            y=alt.Y("count:Q", title="Scan Count"),
+            color=alt.Color("threat_level:N", scale=color_scale, legend=None),
+            tooltip=[
+                alt.Tooltip("threat_level:N", title="Threat Level"),
+                alt.Tooltip("count:Q", title="Count"),
+            ]
+        )
+        .properties(height=200, title="Threat Level Distribution")
+        .configure(**_CHART_CONFIG)
+    )
+    return chart
+
+
+def _chart_history_scan_type_distribution(history_df: pd.DataFrame):
+    if history_df.empty:
+        return None
+    
+    counts = history_df["scan_type"].value_counts().reset_index()
+    counts.columns = ["scan_type", "count"]
+    
+    color_scale = alt.Scale(
+        domain=["Fraud", "URL", "SMS", "Employee", "TXT"],
+        range=["#ff007f", "#00f0ff", "#ffd60a", "#8be8ff", "#00ff87"],
+    )
+    
+    chart = (
+        alt.Chart(counts)
+        .mark_bar(cornerRadiusTopRight=3, cornerRadiusBottomRight=3)
+        .encode(
+            y=alt.Y("scan_type:N", title="Scan Type", sort="-x"),
+            x=alt.X("count:Q", title="Scan Count"),
+            color=alt.Color("scan_type:N", scale=color_scale, legend=None),
+            tooltip=[
+                alt.Tooltip("scan_type:N", title="Scan Type"),
+                alt.Tooltip("count:Q", title="Count"),
+            ]
+        )
+        .properties(height=200, title="Scan Type Distribution")
+        .configure(**_CHART_CONFIG)
+    )
+    return chart
+
+
+def _chart_history_activity_trend(history_df: pd.DataFrame):
+    if history_df.empty:
+        return None
+    
+    plot_df = history_df.copy()
+    plot_df["date"] = pd.to_datetime(plot_df["scan_time"], errors="coerce").dt.strftime("%Y-%m-%d")
+    daily_counts = plot_df.groupby("date").size().reset_index(name="count")
+    daily_counts = daily_counts.sort_values("date", ascending=False).head(7).sort_values("date")
+    
+    if daily_counts.empty:
+        return None
+
+    area = (
+        alt.Chart(daily_counts)
+        .mark_area(opacity=0.15, interpolate="monotone", color="#00f0ff")
+        .encode(
+            x=alt.X("date:N", title="Date"),
+            y=alt.Y("count:Q", title="Scans"),
+        )
+    )
+    line = (
+        alt.Chart(daily_counts)
+        .mark_line(point=True, interpolate="monotone", strokeWidth=2, color="#00f0ff")
+        .encode(
+            x=alt.X("date:N"),
+            y=alt.Y("count:Q"),
+            tooltip=[
+                alt.Tooltip("date:N", title="Date"),
+                alt.Tooltip("count:Q", title="Scans"),
+            ]
+        )
+    )
+    
+    chart = (
+        (area + line)
+        .properties(height=200, title="Recent 7-Day Activity Trend")
+        .configure(**_CHART_CONFIG)
+    )
+    return chart
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Main renderer
 # ─────────────────────────────────────────────────────────────────────────────
@@ -399,121 +500,276 @@ def render_dashboard():
             All results will appear here automatically.
         </div>
         """, unsafe_allow_html=True)
-        return
 
-    # ── Risk tier indicator row ───────────────────────────────────────────────
-    st.markdown("""<div style="height:1px;background:rgba(0,240,255,0.08);margin:8px 0 20px;"></div>""",
-                unsafe_allow_html=True)
+    if has_data:
+        # ── Risk tier indicator row ───────────────────────────────────────────────
+        st.markdown("""<div style="height:1px;background:rgba(0,240,255,0.08);margin:8px 0 20px;"></div>""",
+                    unsafe_allow_html=True)
 
-    t1, t2, t3 = st.columns(3)
-    tier_cards = [
-        (t1, "🔴 Critical Risk ≥70", high_risk, "#ff3b30"),
-        (t2, "🟡 Moderate Risk 50–69", med_risk, "#ffd60a"),
-        (t3, "🟢 Low Risk &lt;50", low_risk, "#00ff87"),
-    ]
-    for col, label, count, color in tier_cards:
-        col.markdown(f"""
-        <div style="background:rgba(6,18,36,0.5);border:1px solid {color}22;
-                    border-top:3px solid {color};border-radius:10px;
-                    padding:14px 18px;text-align:center;">
-            <div style="font-family:'JetBrains Mono',monospace;font-size:10px;
-                        color:#8be8ff;letter-spacing:1px;">{label}</div>
-            <div style="font-family:'Orbitron',sans-serif;font-size:32px;
-                        font-weight:700;color:{color};margin-top:6px;">{count}</div>
-        </div>""", unsafe_allow_html=True)
-
-    # ── Trend chart + Donut ───────────────────────────────────────────────────
-    st.markdown(
-        _section_header("📈", "Threat Trend Analysis", "TIME-SERIES TELEMETRY"),
-        unsafe_allow_html=True,
-    )
-
-    chart_col, donut_col = st.columns([3, 1])
-    with chart_col:
-        trend = _chart_threat_trend(df)
-        if trend:
-            st.altair_chart(trend, use_container_width=True)
-        else:
-            st.info("Not enough date variation to render trend. Scan more URLs over multiple days.")
-
-    with donut_col:
-        donut = _chart_donut(df)
-        if donut:
-            st.altair_chart(donut, use_container_width=True)
-
-    # ── Score distribution + Hourly activity ─────────────────────────────────
-    st.markdown(
-        _section_header("🎯", "Score & Activity Analysis", "HEURISTICS BREAKDOWN"),
-        unsafe_allow_html=True,
-    )
-
-    dist_col, hour_col = st.columns([1, 1])
-    with dist_col:
-        dist = _chart_score_distribution(df)
-        if dist:
-            st.altair_chart(dist, use_container_width=True)
-
-    with hour_col:
-        hourly = _chart_hourly_heatmap(df)
-        if hourly:
-            st.altair_chart(hourly, use_container_width=True)
-
-    # ── Top risky URLs ────────────────────────────────────────────────────────
-    st.markdown(
-        _section_header("🚨", "Top Risk Indicators", "HIGHEST THREAT SCORE TARGETS"),
-        unsafe_allow_html=True,
-    )
-
-    top_chart = _chart_top_risky(df)
-    if top_chart:
-        st.altair_chart(top_chart, use_container_width=True)
-
-    # ── Recent Alert Timeline ─────────────────────────────────────────────────
-    st.markdown(
-        _section_header("⏱️", "Recent Alert Timeline", f"LATEST {min(len(df), 15)} EVENTS"),
-        unsafe_allow_html=True,
-    )
-
-    recent = df.head(15)
-    for _, row in recent.iterrows():
-        color  = _score_color(int(row["score"]))
-        bg     = f"rgba({','.join(str(int(color.lstrip('#')[i:i+2], 16)) for i in (0,2,4))},0.06)"
-        ts_str = row["timestamp"].strftime("%Y-%m-%d %H:%M") if pd.notna(row["timestamp"]) else "—"
-
-        st.markdown(f"""
-        <div class="alert-row" style="border-left:4px solid {color};background:{bg};">
-            <div style="flex:1;min-width:0;">
-                <div style="font-family:'JetBrains Mono',monospace;font-size:12px;
-                            color:#ffffff;overflow:hidden;text-overflow:ellipsis;
-                            white-space:nowrap;" title="{row['url']}">
-                    {row['short_url']}
-                </div>
+        t1, t2, t3 = st.columns(3)
+        tier_cards = [
+            (t1, "🔴 Critical Risk ≥70", high_risk, "#ff3b30"),
+            (t2, "🟡 Moderate Risk 50–69", med_risk, "#ffd60a"),
+            (t3, "🟢 Low Risk &lt;50", low_risk, "#00ff87"),
+        ]
+        for col, label, count, color in tier_cards:
+            col.markdown(f"""
+            <div style="background:rgba(6,18,36,0.5);border:1px solid {color}22;
+                        border-top:3px solid {color};border-radius:10px;
+                        padding:14px 18px;text-align:center;">
                 <div style="font-family:'JetBrains Mono',monospace;font-size:10px;
-                            color:#63768f;margin-top:3px;">{ts_str}</div>
-            </div>
-            <div style="text-align:right;flex-shrink:0;">
-                <div style="font-family:'JetBrains Mono',monospace;font-size:11px;
-                            font-weight:700;color:{color};">{row['score']}/100</div>
-                <div style="font-family:'JetBrains Mono',monospace;font-size:9px;
-                            padding:2px 8px;border:1px solid {color};
-                            border-radius:4px;color:{color};margin-top:4px;
-                            background:rgba(0,0,0,0.3);">
-                    {row['label'].upper()}
+                            color:#8be8ff;letter-spacing:1px;">{label}</div>
+                <div style="font-family:'Orbitron',sans-serif;font-size:32px;
+                            font-weight:700;color:{color};margin-top:6px;">{count}</div>
+            </div>""", unsafe_allow_html=True)
+
+        # ── Trend chart + Donut ───────────────────────────────────────────────────
+        st.markdown(
+            _section_header("📈", "Threat Trend Analysis", "TIME-SERIES TELEMETRY"),
+            unsafe_allow_html=True,
+        )
+
+        chart_col, donut_col = st.columns([3, 1])
+        with chart_col:
+            trend = _chart_threat_trend(df)
+            if trend:
+                st.altair_chart(trend, use_container_width=True)
+            else:
+                st.info("Not enough date variation to render trend. Scan more URLs over multiple days.")
+
+        with donut_col:
+            donut = _chart_donut(df)
+            if donut:
+                st.altair_chart(donut, use_container_width=True)
+
+        # ── Score distribution + Hourly activity ─────────────────────────────────
+        st.markdown(
+            _section_header("🎯", "Score & Activity Analysis", "HEURISTICS BREAKDOWN"),
+            unsafe_allow_html=True,
+        )
+
+        dist_col, hour_col = st.columns([1, 1])
+        with dist_col:
+            dist = _chart_score_distribution(df)
+            if dist:
+                st.altair_chart(dist, use_container_width=True)
+
+        with hour_col:
+            hourly = _chart_hourly_heatmap(df)
+            if hourly:
+                st.altair_chart(hourly, use_container_width=True)
+
+        # ── Top risky URLs ────────────────────────────────────────────────────────
+        st.markdown(
+            _section_header("🚨", "Top Risk Indicators", "HIGHEST THREAT SCORE TARGETS"),
+            unsafe_allow_html=True,
+        )
+
+        top_chart = _chart_top_risky(df)
+        if top_chart:
+            st.altair_chart(top_chart, use_container_width=True)
+
+        # ── Recent Alert Timeline ─────────────────────────────────────────────────
+        st.markdown(
+            _section_header("⏱️", "Recent Alert Timeline", f"LATEST {min(len(df), 15)} EVENTS"),
+            unsafe_allow_html=True,
+        )
+
+        recent = df.head(15)
+        for _, row in recent.iterrows():
+            color  = _score_color(int(row["score"]))
+            bg     = f"rgba({','.join(str(int(color.lstrip('#')[i:i+2], 16)) for i in (0,2,4))},0.06)"
+            ts_str = row["timestamp"].strftime("%Y-%m-%d %H:%M") if pd.notna(row["timestamp"]) else "—"
+
+            st.markdown(f"""
+            <div class="alert-row" style="border-left:4px solid {color};background:{bg};">
+                <div style="flex:1;min-width:0;">
+                    <div style="font-family:'JetBrains Mono',monospace;font-size:12px;
+                                color:#ffffff;overflow:hidden;text-overflow:ellipsis;
+                                white-space:nowrap;" title="{row['url']}">
+                        {row['short_url']}
+                    </div>
+                    <div style="font-family:'JetBrains Mono',monospace;font-size:10px;
+                                color:#63768f;margin-top:3px;">{ts_str}</div>
+                </div>
+                <div style="text-align:right;flex-shrink:0;">
+                    <div style="font-family:'JetBrains Mono',monospace;font-size:11px;
+                                font-weight:700;color:{color};">{row['score']}/100</div>
+                    <div style="font-family:'JetBrains Mono',monospace;font-size:9px;
+                                padding:2px 8px;border:1px solid {color};
+                                border-radius:4px;color:{color};margin-top:4px;
+                                background:rgba(0,0,0,0.3);">
+                        {row['label'].upper()}
+                    </div>
                 </div>
             </div>
-        </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
 
-    # ── Raw data expander ─────────────────────────────────────────────────────
-    with st.expander("🗃️  View Raw Scan Log Table", expanded=False):
-        display_df = df[["url", "label", "score", "timestamp"]].copy()
-        display_df.columns = ["URL", "Classification", "Risk Score", "Timestamp"]
-        display_df["Risk Score"] = display_df["Risk Score"].astype(str) + " / 100"
-        st.dataframe(
-            display_df,
-            use_container_width=True,
-            hide_index=True,
-        )
+        # ── Raw data expander ─────────────────────────────────────────────────────
+        with st.expander("🗃️  View Raw Scan Log Table", expanded=False):
+            display_df = df[["url", "label", "score", "timestamp"]].copy()
+            display_df.columns = ["URL", "Classification", "Risk Score", "Timestamp"]
+            display_df["Risk Score"] = display_df["Risk Score"].astype(str) + " / 100"
+            st.dataframe(
+                display_df,
+                use_container_width=True,
+                hide_index=True,
+            )
+
+    # ── Database Load for History and Trends ─────────────────────────────────
+    db_failed = False
+    history_rows = []
+    try:
+        history_rows = get_history_scans(limit=100)
+    except Exception as e:
+        db_failed = True
+
+    # ── THREAT TREND ANALYTICS ────────────────────────────────────────────────
+    st.markdown(
+        _section_header("📊", "Threat Trend Analytics", "HISTORICAL INTEL CHARTS"),
+        unsafe_allow_html=True,
+    )
+
+    if db_failed:
+        st.error("Unable to load scan history charts.")
+    elif len(history_rows) < 1:
+        st.info("Not enough data to generate threat trends.")
+    else:
+        # Generate DataFrame from history rows
+        history_df = pd.DataFrame(history_rows, columns=["scan_time", "scan_type", "filename", "result_summary", "threat_level"])
+        
+        cg1, cg2, cg3 = st.columns(3)
+        
+        with cg1:
+            st.markdown("""
+            <div style="font-family:'Orbitron',sans-serif;font-size:12px;color:#8be8ff;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;font-weight:600;text-align:center;">
+                📈 THREAT DISTRIBUTION
+            </div>
+            """, unsafe_allow_html=True)
+            chart1 = _chart_history_threat_distribution(history_df)
+            if chart1:
+                st.altair_chart(chart1, use_container_width=True)
+                
+        with cg2:
+            st.markdown("""
+            <div style="font-family:'Orbitron',sans-serif;font-size:12px;color:#8be8ff;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;font-weight:600;text-align:center;">
+                🧠 SCAN TYPE ANALYTICS
+            </div>
+            """, unsafe_allow_html=True)
+            chart2 = _chart_history_scan_type_distribution(history_df)
+            if chart2:
+                st.altair_chart(chart2, use_container_width=True)
+                
+        with cg3:
+            st.markdown("""
+            <div style="font-family:'Orbitron',sans-serif;font-size:12px;color:#8be8ff;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;font-weight:600;text-align:center;">
+                📅 SCAN ACTIVITY TREND
+            </div>
+            """, unsafe_allow_html=True)
+            chart3 = _chart_history_activity_trend(history_df)
+            if chart3:
+                st.altair_chart(chart3, use_container_width=True)
+
+    # ── RECENT SCAN HISTORY ───────────────────────────────────────────────────
+    st.markdown(
+        _section_header("🗂️", "Recent Scan History", "UNIVERSAL INTAKE TELEMETRY"),
+        unsafe_allow_html=True,
+    )
+
+    if db_failed:
+        st.error("Unable to load scan history.")
+    elif len(history_rows) == 0:
+        st.info("No scan history available yet.")
+    else:
+        # Visual Summary Metrics
+        total_scans = len(history_rows)
+        high_threats = sum(1 for r in history_rows if r[4] == "HIGH")
+        med_threats = sum(1 for r in history_rows if r[4] == "MEDIUM")
+        low_threats = sum(1 for r in history_rows if r[4] == "LOW")
+
+        mc1, mc2, mc3, mc4 = st.columns(4)
+        mc1.markdown(f'<div class="stat-wrap">{_stat_card("Total Scans", total_scans, "All history", "#00f0ff")}</div>', unsafe_allow_html=True)
+        mc2.markdown(f'<div class="stat-wrap">{_stat_card("High Threat", high_threats, "Critical risk", "#ff3b30")}</div>', unsafe_allow_html=True)
+        mc3.markdown(f'<div class="stat-wrap">{_stat_card("Medium Threat", med_threats, "Moderate risk", "#ffd60a")}</div>', unsafe_allow_html=True)
+        mc4.markdown(f'<div class="stat-wrap">{_stat_card("Low Threat", low_threats, "Minimal risk", "#00ff87")}</div>', unsafe_allow_html=True)
+
+        st.write("")
+
+        # Dropdown filtering
+        f_col1, f_col2 = st.columns([3, 1])
+        with f_col1:
+            filter_val = st.selectbox(
+                "Filter History by Type",
+                ["All", "Fraud", "URL", "SMS", "Employee", "TXT"]
+            )
+
+        # Filter the rows
+        if filter_val == "All":
+            filtered_rows = history_rows
+        else:
+            filtered_rows = [r for r in history_rows if r[1] == filter_val]
+
+        with f_col2:
+            st.write("") # spacing
+            st.write("") # spacing
+            if len(filtered_rows) > 0:
+                export_df = pd.DataFrame(filtered_rows, columns=["Scan Time", "Scan Type", "File Name", "Summary", "Threat Level"])
+                csv_payload = export_df.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Export History CSV",
+                    data=csv_payload,
+                    file_name=f"scan_history_{filter_val.lower()}.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            else:
+                st.button("📥 Export History CSV", disabled=True, use_container_width=True, help="No records available to export.")
+                st.markdown("<p style='font-size:11px;color:#ff3b30;margin-top:4px;text-align:center;'>No records available to export.</p>", unsafe_allow_html=True)
+
+        # Render Table
+        if len(filtered_rows) > 0:
+            top_10 = filtered_rows[:10]
+            
+            def get_threat_badge(level):
+                if level == "HIGH":
+                    color = "#ff3b30"
+                    bg = "rgba(255, 59, 48, 0.1)"
+                elif level == "MEDIUM":
+                    color = "#ffd60a"
+                    bg = "rgba(255, 214, 10, 0.1)"
+                else:
+                    color = "#00ff87"
+                    bg = "rgba(0, 255, 135, 0.1)"
+                return f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:11px;font-weight:700;padding:2px 8px;border:1px solid {color};border-radius:4px;color:{color};background:{bg};">{level}</span>'
+
+            table_html = """
+            <table style="width:100%; border-collapse:collapse; background:rgba(6,18,36,0.45); border:1px solid rgba(0,240,255,0.12); border-radius:12px; margin-top:10px;">
+                <thead>
+                    <tr style="border-bottom:1px solid rgba(0,240,255,0.15); text-align:left; font-family:'Orbitron',sans-serif; font-size:11px; color:#8be8ff; letter-spacing:1px; text-transform:uppercase;">
+                        <th style="padding:12px;">Scan Time</th>
+                        <th style="padding:12px;">File Name</th>
+                        <th style="padding:12px;">Scan Type</th>
+                        <th style="padding:12px;">Threat Level</th>
+                        <th style="padding:12px;">Summary</th>
+                    </tr>
+                </thead>
+                <tbody style="font-family:'JetBrains Mono',monospace; font-size:12px; color:#ffffff;">
+            """
+            for row in top_10:
+                badge = get_threat_badge(row[4])
+                table_html += f"""
+                    <tr style="border-bottom:1px solid rgba(0,240,255,0.06);">
+                        <td style="padding:12px; color:#63768f;">{row[0]}</td>
+                        <td style="padding:12px; font-weight:600;">{row[2]}</td>
+                        <td style="padding:12px; color:#8be8ff;">{row[1]}</td>
+                        <td style="padding:12px;">{badge}</td>
+                        <td style="padding:12px; color:#d9f7ff;">{row[3]}</td>
+                    </tr>
+                """
+            table_html += "</tbody></table>"
+            st.markdown(table_html, unsafe_allow_html=True)
+        else:
+            st.info("No records match the selected filter.")
 
     # ── Footer ─────────────────────────────────────────────────────────────────
     st.markdown(f"""
