@@ -552,7 +552,6 @@ def render_copilot():
 
         st.markdown(f"""
         <div class="copilot-panel">
-          <!-- Header -->
           <div style="display:flex;align-items:center;justify-content:space-between;
                       margin-bottom:12px;border-bottom:1px solid rgba(0,240,255,0.15);
                       padding-bottom:8px;">
@@ -567,7 +566,6 @@ def render_copilot():
             <span style="font-family:'JetBrains Mono',monospace;font-size:9px;
                          color:#00ff87;margin-right:26px;">● ONLINE</span>
           </div>
-          <!-- Messages -->
           <div class="copilot-chat-area" id="sentrax-chat-area">
             {chat_bubbles}
           </div>

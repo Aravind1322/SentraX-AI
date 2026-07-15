@@ -1,7 +1,44 @@
 import streamlit as st
 import pandas as pd
+import requests as http_requests
 from src.utils.detector import predict_url, predict_sms, score_fraud_row, get_fraud_status
 from src.utils.database import get_recent_scans
+from src.utils.auth_state import get_auth_headers
+
+# Backend base URL
+_BACKEND_URL = "http://127.0.0.1:8000"
+
+
+def _call_backend_fraud(amount: float, location: str, device: str, api_key: str):
+    """
+    POST to /api/fraud/scan and return the result dict,
+    or None if the backend is unavailable.
+    """
+    try:
+        resp = http_requests.post(
+            f"{_BACKEND_URL}/api/fraud/scan",
+            json={
+                "amount":      amount,
+                "location":    location,
+                "device":      device,
+                "customer_id": api_key,
+            },
+            headers=get_auth_headers(),
+            timeout=10,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return {
+            "score":          data.get("risk_score", 10),
+            "status":         data.get("status", "LOW RISK"),
+            "recommendation": data.get("recommendation", "ALLOW TRANSACTION"),
+            "reasons":        data.get("reasons", []),
+        }
+    except (http_requests.ConnectionError, http_requests.Timeout):
+        return None
+    except Exception:
+        return None
+
 
 
 def render_enterprise():
@@ -195,140 +232,125 @@ def render_enterprise():
 
         if st.button("Analyze Transaction Telemetry"):
 
-            score = 10
-            reasons = []
+            fraud = _call_backend_fraud(amount, location, device, api_key)
 
-            if amount > 20000:
-                score += 25
-                reasons.append(
-                    "High value transaction flag"
-                )
-
-            if location == "Unknown":
-                score += 30
-                reasons.append(
-                    "Unidentified geolocation coordinate"
-                )
-
-            if device == "New Device":
-                score += 25
-                reasons.append(
-                    "Unregistered device MAC signature"
-                )
-
-            score = min(score, 99)
-
-            status = (
-                "HIGH RISK"
-                if score >= 70
-                else "LOW RISK"
-            )
-
-            recommendation = (
-                "BLOCK / OTP VERIFY"
-                if score >= 70
-                else "ALLOW TRANSACTION"
-            )
-
-            rec_color = "#ff3b30" if score >= 70 else "#00ff87"
-            badge_bg = "rgba(255, 59, 48, 0.08)" if score >= 70 else "rgba(0, 255, 135, 0.05)"
-
-            st.markdown(f"""
-            <div class="result-safe" style="border-left: 5px solid {rec_color}; background-color: rgba(6, 18, 36, 0.45); margin-top: 25px; margin-bottom: 25px;">
-                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
-                    <h3 style="margin: 0; font-family: 'Orbitron', sans-serif; color: {rec_color}; font-size: 16px;">
-                        📟 RADAR RESPONSE STATUS
-                    </h3>
-                    <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600; padding: 2px 8px; background-color: {badge_bg}; border: 1px solid {rec_color}; color: {rec_color}; border-radius: 4px;">
-                        {status}
+            if fraud is None:
+                st.markdown("""
+                <div style="background:rgba(255,59,48,0.07);border:1px solid rgba(255,59,48,0.30);
+                            border-left:4px solid #ff3b30;border-radius:14px;padding:18px 22px;
+                            margin:14px 0;font-family:'JetBrains Mono',monospace;font-size:14px;
+                            color:#ff8e8e;">
+                    &#x26A0;&#xFE0F;&nbsp;&nbsp;<b>Backend service unavailable.</b><br>
+                    <span style="font-size:12px;color:#63768f;">
+                        Ensure the FastAPI server is running at http://127.0.0.1:8000
+                        &nbsp;(<code>uvicorn main:app --reload</code> inside the backend/ folder).
                     </span>
                 </div>
-                <p style="font-family: 'JetBrains Mono', monospace; font-size: 13px; margin: 0; color: #d9f7ff;">
-                    TELEMETRY CODE: <b>{score}/100</b> | RECOMMENDED ACTION: <b>{recommendation}</b>
-                </p>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
 
-            bar_color = "#ff3b30" if score >= 70 else "#ffd60a" if score >= 50 else "#00ff87"
-            st.markdown(f"""
-            <div style="width: 100%; background-color: rgba(255, 255, 255, 0.05); border-radius: 10px; height: 12px; border: 1px solid rgba(255, 255, 255, 0.1); overflow: hidden; margin-top: 15px; margin-bottom: 25px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);">
-                <div style="width: {score}%; background: linear-gradient(90deg, #00f0ff, {bar_color}); height: 100%; box-shadow: 0 0 10px {bar_color};"></div>
-            </div>
-            """, unsafe_allow_html=True)
+            else:
+                score          = fraud["score"]
+                status         = fraud["status"]
+                recommendation = fraud["recommendation"]
+                reasons        = fraud["reasons"]
 
-            c1, c2, c3 = st.columns(3)
+                rec_color = "#ff3b30" if score >= 70 else "#00ff87"
+                badge_bg  = "rgba(255, 59, 48, 0.08)" if score >= 70 else "rgba(0, 255, 135, 0.05)"
 
-            c1.markdown(f"""
-            <div class="telemetry-card" style="border-left: 4px solid #00f0ff;">
-                <div style="display: flex; justify-content: space-between; align-items: center; color: #8be8ff; font-family: 'JetBrains Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">
-                    <span>Risk Score Index</span>
-                    <span>📊</span>
+                st.markdown(f"""
+                <div class="result-safe" style="border-left: 5px solid {rec_color}; background-color: rgba(6, 18, 36, 0.45); margin-top: 25px; margin-bottom: 25px;">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+                        <h3 style="margin: 0; font-family: 'Orbitron', sans-serif; color: {rec_color}; font-size: 16px;">
+                            &#x1F4DF; RADAR RESPONSE STATUS
+                        </h3>
+                        <span style="font-family: 'JetBrains Mono', monospace; font-size: 10px; font-weight: 600; padding: 2px 8px; background-color: {badge_bg}; border: 1px solid {rec_color}; color: {rec_color}; border-radius: 4px;">
+                            {status}
+                        </span>
+                    </div>
+                    <p style="font-family: 'JetBrains Mono', monospace; font-size: 13px; margin: 0; color: #d9f7ff;">
+                        TELEMETRY CODE: <b>{score}/100</b> | RECOMMENDED ACTION: <b>{recommendation}</b>
+                    </p>
                 </div>
-                <div style="font-size: 24px; font-family: 'Orbitron', sans-serif; font-weight: 700; color: #ffffff; margin-top: 6px;">{score}/100</div>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
 
-            c2.markdown(f"""
-            <div class="telemetry-card" style="border-left: 4px solid #ff007f;">
-                <div style="display: flex; justify-content: space-between; align-items: center; color: #8be8ff; font-family: 'JetBrains Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">
-                    <span>Security Status</span>
-                    <span>🛡️</span>
+                bar_color = "#ff3b30" if score >= 70 else "#ffd60a" if score >= 50 else "#00ff87"
+                st.markdown(f"""
+                <div style="width: 100%; background-color: rgba(255, 255, 255, 0.05); border-radius: 10px; height: 12px; border: 1px solid rgba(255, 255, 255, 0.1); overflow: hidden; margin-top: 15px; margin-bottom: 25px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.5);">
+                    <div style="width: {score}%; background: linear-gradient(90deg, #00f0ff, {bar_color}); height: 100%; box-shadow: 0 0 10px {bar_color};"></div>
                 </div>
-                <div style="font-size: 24px; font-family: 'Orbitron', sans-serif; font-weight: 700; color: #ffffff; margin-top: 6px;">{status}</div>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
 
-            c3.markdown(f"""
-            <div class="telemetry-card" style="border-left: 4px solid #00ff87;">
-                <div style="display: flex; justify-content: space-between; align-items: center; color: #8be8ff; font-family: 'JetBrains Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">
-                    <span>Recommendation</span>
-                    <span>📟</span>
+                c1, c2, c3 = st.columns(3)
+
+                c1.markdown(f"""
+                <div class="telemetry-card" style="border-left: 4px solid #00f0ff;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; color: #8be8ff; font-family: 'JetBrains Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">
+                        <span>Risk Score Index</span><span>&#x1F4CA;</span>
+                    </div>
+                    <div style="font-size: 24px; font-family: 'Orbitron', sans-serif; font-weight: 700; color: #ffffff; margin-top: 6px;">{score}/100</div>
                 </div>
-                <div style="font-size: 24px; font-family: 'Orbitron', sans-serif; font-weight: 700; color: #ffffff; margin-top: 6px;">{recommendation}</div>
-            </div>
-            """, unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
 
-            st.markdown("""
-            <div style="margin-top: 30px; margin-bottom: 15px;">
-                <span style="font-family: 'Orbitron', sans-serif; font-size: 13px; color: #8be8ff; letter-spacing: 2px; text-transform: uppercase;">
-                    🔍 Threat Indicator Log
-                </span>
-                <hr style="border: 0; border-top: 1px solid rgba(0, 240, 255, 0.15); margin-top: 8px; margin-bottom: 15px;">
-            </div>
-            """, unsafe_allow_html=True)
+                c2.markdown(f"""
+                <div class="telemetry-card" style="border-left: 4px solid #ff007f;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; color: #8be8ff; font-family: 'JetBrains Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">
+                        <span>Security Status</span><span>&#x1F6E1;&#xFE0F;</span>
+                    </div>
+                    <div style="font-size: 24px; font-family: 'Orbitron', sans-serif; font-weight: 700; color: #ffffff; margin-top: 6px;">{status}</div>
+                </div>
+                """, unsafe_allow_html=True)
 
-            if reasons:
-                for r in reasons:
+                c3.markdown(f"""
+                <div class="telemetry-card" style="border-left: 4px solid #00ff87;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; color: #8be8ff; font-family: 'JetBrains Mono', monospace; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">
+                        <span>Recommendation</span><span>&#x1F4DF;</span>
+                    </div>
+                    <div style="font-size: 24px; font-family: 'Orbitron', sans-serif; font-weight: 700; color: #ffffff; margin-top: 6px;">{recommendation}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                st.markdown("""
+                <div style="margin-top: 30px; margin-bottom: 15px;">
+                    <span style="font-family: 'Orbitron', sans-serif; font-size: 13px; color: #8be8ff; letter-spacing: 2px; text-transform: uppercase;">
+                        &#x1F50D; Threat Indicator Log
+                    </span>
+                    <hr style="border: 0; border-top: 1px solid rgba(0, 240, 255, 0.15); margin-top: 8px; margin-bottom: 15px;">
+                </div>
+                """, unsafe_allow_html=True)
+
+                if reasons:
+                    for r in reasons:
+                        st.markdown(
+                            f'<div class="reason-chip">&#x26A0;&#xFE0F; {r}</div>',
+                            unsafe_allow_html=True
+                        )
+                else:
                     st.markdown(
-                        f'<div class="reason-chip">⚠️ {r}</div>',
+                        '<div class="reason-chip" style="border-left: 3px solid #00ff87;">&#x1F6E1;&#xFE0F; No transaction heuristics triggered. Safe parameters.</div>',
                         unsafe_allow_html=True
                     )
-            else:
-                st.markdown(
-                    '<div class="reason-chip" style="border-left: 3px solid #00ff87;">🛡️ No transaction heuristics triggered. Safe parameters.</div>',
-                    unsafe_allow_html=True
-                )
 
-            st.markdown("""
-            <div style="margin-top: 30px; margin-bottom: 15px;">
-                <span style="font-family: 'Orbitron', sans-serif; font-size: 13px; color: #8be8ff; letter-spacing: 2px; text-transform: uppercase;">
-                    📟 Raw JSON Telemetry Response
-                </span>
-                <hr style="border: 0; border-top: 1px solid rgba(0, 240, 255, 0.15); margin-top: 8px; margin-bottom: 15px;">
-            </div>
-            """, unsafe_allow_html=True)
+                st.markdown("""
+                <div style="margin-top: 30px; margin-bottom: 15px;">
+                    <span style="font-family: 'Orbitron', sans-serif; font-size: 13px; color: #8be8ff; letter-spacing: 2px; text-transform: uppercase;">
+                        &#x1F4DF; Raw JSON Telemetry Response
+                    </span>
+                    <hr style="border: 0; border-top: 1px solid rgba(0, 240, 255, 0.15); margin-top: 8px; margin-bottom: 15px;">
+                </div>
+                """, unsafe_allow_html=True)
 
-            st.json({
-                "api_key": api_key,
-                "amount": amount,
-                "location": location,
-                "device": device,
-                "risk_score": score,
-                "status": status,
-                "recommendation": recommendation
-            })
+                st.json({
+                    "api_key":        api_key,
+                    "amount":         amount,
+                    "location":       location,
+                    "device":         device,
+                    "risk_score":     score,
+                    "status":         status,
+                    "recommendation": recommendation,
+                })
 
         st.markdown('</div>', unsafe_allow_html=True)
+
 
 
     # ================= URL MODULE =================

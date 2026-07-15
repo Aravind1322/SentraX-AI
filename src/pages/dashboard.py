@@ -39,7 +39,8 @@ def _score_color(score: int) -> str:
 
 
 def _stat_card(title: str, value, subtitle: str = "", accent: str = "#00f0ff") -> str:
-    return f"""
+    import textwrap
+    html = f"""
     <div style="
         background: rgba(6,18,36,0.6);
         border: 1px solid rgba(0,240,255,0.12);
@@ -57,6 +58,7 @@ def _stat_card(title: str, value, subtitle: str = "", accent: str = "#00f0ff") -
                     font-weight:700;color:#ffffff;line-height:1;">{value}</div>
         {"<div style='font-family:JetBrains Mono,monospace;font-size:11px;color:#8be8ff;margin-top:6px;'>" + subtitle + "</div>" if subtitle else ""}
     </div>"""
+    return textwrap.dedent(html)
 
 
 def _section_header(icon: str, title: str, tag: str = "") -> str:
@@ -493,11 +495,15 @@ def render_dashboard():
 
     if not has_data:
         st.markdown("""
-        <div style="text-align:center;padding:60px 20px;color:#63768f;
-                    font-family:'JetBrains Mono',monospace;font-size:14px;">
-            📡 No scan data yet.<br><br>
-            Use the <b style="color:#8be8ff;">🔍 Scanner</b> page to start scanning URLs.
-            All results will appear here automatically.
+        <div class="v43-empty">
+            <div class="v43-empty-icon">📡</div>
+            <div class="v43-empty-title">No Scan Data Available</div>
+            <div class="v43-empty-body">
+                No scan history available yet.<br>
+                Run a <b style="color:#8be8ff;">⚡ Quick Scan</b> or use the
+                <b style="color:#8be8ff;">🌐 URL Scanner</b> to generate analytics.<br>
+                All results will appear here automatically.
+            </div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -581,29 +587,16 @@ def render_dashboard():
             bg     = f"rgba({','.join(str(int(color.lstrip('#')[i:i+2], 16)) for i in (0,2,4))},0.06)"
             ts_str = row["timestamp"].strftime("%Y-%m-%d %H:%M") if pd.notna(row["timestamp"]) else "—"
 
-            st.markdown(f"""
-            <div class="alert-row" style="border-left:4px solid {color};background:{bg};">
-                <div style="flex:1;min-width:0;">
-                    <div style="font-family:'JetBrains Mono',monospace;font-size:12px;
-                                color:#ffffff;overflow:hidden;text-overflow:ellipsis;
-                                white-space:nowrap;" title="{row['url']}">
-                        {row['short_url']}
-                    </div>
-                    <div style="font-family:'JetBrains Mono',monospace;font-size:10px;
-                                color:#63768f;margin-top:3px;">{ts_str}</div>
-                </div>
-                <div style="text-align:right;flex-shrink:0;">
-                    <div style="font-family:'JetBrains Mono',monospace;font-size:11px;
-                                font-weight:700;color:{color};">{row['score']}/100</div>
-                    <div style="font-family:'JetBrains Mono',monospace;font-size:9px;
-                                padding:2px 8px;border:1px solid {color};
-                                border-radius:4px;color:{color};margin-top:4px;
-                                background:rgba(0,0,0,0.3);">
-                        {row['label'].upper()}
-                    </div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f"""<div class="alert-row" style="border-left:4px solid {color};background:{bg};">
+<div style="flex:1;min-width:0;">
+<div style="font-family:'JetBrains Mono',monospace;font-size:12px;color:#ffffff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="{row['url']}">{row['short_url']}</div>
+<div style="font-family:'JetBrains Mono',monospace;font-size:10px;color:#63768f;margin-top:3px;">{ts_str}</div>
+</div>
+<div style="text-align:right;flex-shrink:0;">
+<div style="font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;color:{color};">{row['score']}/100</div>
+<div style="font-family:'JetBrains Mono',monospace;font-size:9px;padding:2px 8px;border:1px solid {color};border-radius:4px;color:{color};margin-top:4px;background:rgba(0,0,0,0.3);">{row['label'].upper()}</div>
+</div>
+</div>""", unsafe_allow_html=True)
 
         # ── Raw data expander ─────────────────────────────────────────────────────
         with st.expander("🗃️  View Raw Scan Log Table", expanded=False):
@@ -633,7 +626,16 @@ def render_dashboard():
     if db_failed:
         st.error("Unable to load scan history charts.")
     elif len(history_rows) < 1:
-        st.info("Not enough data to generate threat trends.")
+        st.markdown("""
+        <div class="v43-empty">
+            <div class="v43-empty-icon">📊</div>
+            <div class="v43-empty-title">No Trend Data Yet</div>
+            <div class="v43-empty-body">
+                Not enough data to generate threat trends.<br>
+                Run a <b style="color:#8be8ff;">⚡ Quick Scan</b> to start populating analytics.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     else:
         # Generate DataFrame from history rows
         history_df = pd.DataFrame(history_rows, columns=["scan_time", "scan_type", "filename", "result_summary", "threat_level"])
@@ -679,7 +681,17 @@ def render_dashboard():
     if db_failed:
         st.error("Unable to load scan history.")
     elif len(history_rows) == 0:
-        st.info("No scan history available yet.")
+        st.markdown("""
+        <div class="v43-empty">
+            <div class="v43-empty-icon">🗂️</div>
+            <div class="v43-empty-title">No Investigations Yet</div>
+            <div class="v43-empty-body">
+                No scan history available.<br>
+                Run a <b style="color:#8be8ff;">⚡ Quick Scan</b> to generate analytics<br>
+                and build your investigation timeline.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
     else:
         # Visual Summary Metrics
         total_scans = len(history_rows)
@@ -742,32 +754,34 @@ def render_dashboard():
                     bg = "rgba(0, 255, 135, 0.1)"
                 return f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:11px;font-weight:700;padding:2px 8px;border:1px solid {color};border-radius:4px;color:{color};background:{bg};">{level}</span>'
 
+            import re
+            import textwrap
+
             table_html = """
-            <table style="width:100%; border-collapse:collapse; background:rgba(6,18,36,0.45); border:1px solid rgba(0,240,255,0.12); border-radius:12px; margin-top:10px;">
-                <thead>
-                    <tr style="border-bottom:1px solid rgba(0,240,255,0.15); text-align:left; font-family:'Orbitron',sans-serif; font-size:11px; color:#8be8ff; letter-spacing:1px; text-transform:uppercase;">
-                        <th style="padding:12px;">Scan Time</th>
-                        <th style="padding:12px;">File Name</th>
-                        <th style="padding:12px;">Scan Type</th>
-                        <th style="padding:12px;">Threat Level</th>
-                        <th style="padding:12px;">Summary</th>
-                    </tr>
-                </thead>
-                <tbody style="font-family:'JetBrains Mono',monospace; font-size:12px; color:#ffffff;">
+<table style="width:100%; border-collapse:collapse; background:rgba(6,18,36,0.45); border:1px solid rgba(0,240,255,0.12); border-radius:12px; margin-top:10px;">
+    <thead>
+        <tr style="border-bottom:1px solid rgba(0,240,255,0.15); text-align:left; font-family:'Orbitron',sans-serif; font-size:11px; color:#8be8ff; letter-spacing:1px; text-transform:uppercase;">
+            <th style="padding:12px;">Scan Time</th>
+            <th style="padding:12px;">File Name</th>
+            <th style="padding:12px;">Scan Type</th>
+            <th style="padding:12px;">Threat Level</th>
+            <th style="padding:12px;">Summary</th>
+        </tr>
+    </thead>
+    <tbody style="font-family:'JetBrains Mono',monospace; font-size:12px; color:#ffffff;">
             """
             for row in top_10:
                 badge = get_threat_badge(row[4])
-                table_html += f"""
-                    <tr style="border-bottom:1px solid rgba(0,240,255,0.06);">
-                        <td style="padding:12px; color:#63768f;">{row[0]}</td>
-                        <td style="padding:12px; font-weight:600;">{row[2]}</td>
-                        <td style="padding:12px; color:#8be8ff;">{row[1]}</td>
-                        <td style="padding:12px;">{badge}</td>
-                        <td style="padding:12px; color:#d9f7ff;">{row[3]}</td>
-                    </tr>
-                """
+                clean_summary = re.sub(r'<[^>]+>', '', str(row[3])) if row[3] else ""
+                table_html += f"""<tr style="border-bottom:1px solid rgba(0,240,255,0.06);">
+<td style="padding:12px; color:#63768f;">{row[0]}</td>
+<td style="padding:12px; font-weight:600;">{row[2]}</td>
+<td style="padding:12px; color:#8be8ff;">{row[1]}</td>
+<td style="padding:12px;">{badge}</td>
+<td style="padding:12px; color:#d9f7ff;">{clean_summary}</td>
+</tr>"""
             table_html += "</tbody></table>"
-            st.markdown(table_html, unsafe_allow_html=True)
+            st.markdown(textwrap.dedent(table_html), unsafe_allow_html=True)
         else:
             st.info("No records match the selected filter.")
 

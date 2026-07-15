@@ -1,0 +1,58 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: sentrax_db
+    restart: always
+    environment:
+      POSTGRES_DB: sentrax
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: sentraxpass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d sentrax"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sentrax_backend
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:sentraxpass@db:5432/sentrax
+      - VIRUSTOTAL_API_KEY=${VIRUSTOTAL_API_KEY:-}
+      - ABUSEIPDB_API_KEY=${ABUSEIPDB_API_KEY:-}
+      - PHISHTANK_API_KEY=${PHISHTANK_API_KEY:-}
+      - URLHAUS_API_KEY=${URLHAUS_API_KEY:-}
+      - SENTRAX_SECRET_KEY=${SENTRAX_SECRET_KEY:-changeme-before-production}
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./backend/logs:/app/logs
+
+  frontend:
+    build:
+      context: .
+      dockerfile: ./frontend/Dockerfile
+    container_name: sentrax_frontend
+    restart: always
+    ports:
+      - "8501:8501"
+    environment:
+      - BACKEND_URL=http://backend:8000
+      - ENABLE_DEV_BYPASS=${ENABLE_DEV_BYPASS:-False}
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:

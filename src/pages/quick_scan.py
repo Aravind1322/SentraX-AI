@@ -2,8 +2,15 @@ import streamlit as st
 import pandas as pd
 import re
 import io
+import time
 from src.utils.detector import score_fraud_row, get_fraud_status
 from src.utils.report_generator import generate_executive_pdf_report
+from src.utils.explainer import (
+    explain_fraud_row,
+    explain_url_batch,
+    explain_sms_batch,
+    explain_employee_batch,
+)
 
 def get_login_hour(login_time_val):
     try:
@@ -106,7 +113,41 @@ def render_quick_scan():
 
     if uploaded_file is not None:
         file_name = uploaded_file.name.lower()
-        
+
+        # ── V4.3 Staged loading animation ─────────────────────────────
+        stages = [
+            "📁  Uploading File...",
+            "🔍  Detecting Scan Type...",
+            "🤖  Running Threat Analysis...",
+            "📊  Generating Report...",
+            "💾  Saving Scan History...",
+            "✅  Completed",
+        ]
+        stage_ph = st.empty()
+        prog_ph  = st.empty()
+        prog_bar = prog_ph.progress(0)
+        for i, stage in enumerate(stages):
+            stage_html = ""
+            for j, s in enumerate(stages):
+                if j < i:
+                    cls  = "v43-stage v43-stage-done"
+                    icon = "✅"
+                elif j == i:
+                    cls  = "v43-stage v43-stage-active"
+                    icon = "⟳"
+                else:
+                    cls  = "v43-stage v43-stage-pending"
+                    icon = "○"
+                stage_html += f'<div class="{cls}">{icon}&nbsp;&nbsp;{s}</div>'
+            stage_ph.markdown(
+                f'<div style="background:rgba(6,18,36,0.50);border:1px solid rgba(0,240,255,0.10);'
+                f'border-radius:14px;padding:14px 18px;margin:10px 0;">{stage_html}</div>',
+                unsafe_allow_html=True
+            )
+            prog_bar.progress(int((i + 1) / len(stages) * 100))
+            time.sleep(0.32)
+        stage_ph.empty()
+        prog_ph.empty()
         ds_type = None
         ds_mod = None
         result_df = pd.DataFrame()
@@ -128,207 +169,67 @@ def render_quick_scan():
         pdf_error_occurred = False
         pdf_text_preview = ""
 
-        if file_name.endswith('.csv'):
-            try:
-                raw_df = pd.read_csv(uploaded_file)
-                cols_lower = {str(c).strip().lower() for c in raw_df.columns}
-                col_map = {c.lower(): c for c in raw_df.columns}
+        import requests as http_requests
+        from src.utils.auth_state import get_auth_headers
 
-                if {"amount", "location", "device"}.issubset(cols_lower):
-                    ds_type = "Transaction Dataset"
-                    ds_mod = "Fraud Detection API"
-                    
-                    df_work = raw_df.rename(columns={
-                        col_map["amount"]: "amount",
-                        col_map["location"]: "location",
-                        col_map["device"]: "device",
-                    })
-
-                    df_work["Risk Score"] = df_work.apply(score_fraud_row, axis=1)
-                    df_work["Status"] = df_work["Risk Score"].apply(get_fraud_status)
-
-                    result_df = raw_df.copy()
-                    result_df["Risk Score"] = df_work["Risk Score"].values
-                    result_df["Status"] = df_work["Status"].values
-                    result_df["Scan Time"] = scan_time_val
-
-                    total_records = len(df_work)
-                    high_risk_count = int((df_work["Status"] == "HIGH RISK").sum())
-                    medium_risk_count = int((df_work["Status"] == "MEDIUM RISK").sum())
-                    low_risk_count = int((df_work["Status"] == "LOW RISK").sum())
-                    show_fraud_summary = True
-
-                elif "url" in cols_lower:
-                    ds_type = "URL Dataset"
-                    ds_mod = "URL Intelligence"
-                    
-                    url_col = col_map["url"]
-                    keywords = ["paypal", "verify", "secure-update", "bank", "login"]
-                    
-                    def check_url(val):
-                        val_str = str(val).lower()
-                        if any(kw in val_str for kw in keywords):
-                            return "SUSPICIOUS"
-                        return "SAFE"
-
-                    result_df = pd.DataFrame()
-                    result_df["URL"] = raw_df[url_col]
-                    result_df["Status"] = raw_df[url_col].apply(check_url)
-                    result_df["Scan Time"] = scan_time_val
-
-                elif "message" in cols_lower:
-                    ds_type = "SMS Dataset"
-                    ds_mod = "Scam Filtering"
-                    
-                    msg_col = col_map["message"]
-                    keywords = ["lottery", "winner", "claim", "urgent", "verify", "prize"]
-
-                    def check_sms(val):
-                        val_str = str(val).lower()
-                        if any(kw in val_str for kw in keywords):
-                            return "SCAM"
-                        return "SAFE"
-
-                    result_df = pd.DataFrame()
-                    result_df["Message"] = raw_df[msg_col]
-                    result_df["Prediction"] = raw_df[msg_col].apply(check_sms)
-                    result_df["Scan Time"] = scan_time_val
-
-                elif {"employee", "login_time"}.issubset(cols_lower):
-                    ds_type = "Employee Dataset"
-                    ds_mod = "Employee Monitoring"
-
-                    emp_col = col_map["employee"]
-                    time_col = col_map["login_time"]
-
-                    def check_employee(val):
-                        hour = get_login_hour(val)
-                        if hour < 6:
-                            return "SUSPICIOUS"
-                        return "NORMAL"
-
-                    result_df = pd.DataFrame()
-                    result_df["Employee"] = raw_df[emp_col]
-                    result_df["Risk Level"] = raw_df[time_col].apply(check_employee)
-                    result_df["Scan Time"] = scan_time_val
-
-                else:
-                    ds_type = "Generic CSV Dataset"
-                    ds_mod = "Standard Analyzer"
-                    result_df = raw_df.copy()
-                    result_df["Scan Time"] = scan_time_val
-
-            except Exception as e:
-                st.error(f"Error parsing CSV file: {str(e)}")
-
-        elif file_name.endswith('.txt'):
-            try:
-                content = uploaded_file.read().decode("utf-8")
-                lines = [line.strip() for line in content.splitlines() if line.strip()]
-                
-                ds_type = "SMS Dataset (Plain Text)"
-                ds_mod = "Scam Filtering"
-
-                keywords = ["lottery", "winner", "claim", "urgent", "verify", "prize"]
-                def check_sms(val):
-                    val_str = str(val).lower()
-                    if any(kw in val_str for kw in keywords):
-                        return "SCAM"
-                    return "SAFE"
-
-                result_df = pd.DataFrame()
-                result_df["Message"] = lines
-                result_df["Prediction"] = pd.Series(lines).apply(check_sms).values
-                result_df["Scan Time"] = scan_time_val
-            except Exception as e:
-                st.error(f"Error parsing TXT file: {str(e)}")
-
-        elif file_name.endswith('.pdf'):
-            ds_type = "Document Dataset (PDF)"
-            ds_mod = "PDF Threat Intelligence"
+        backend_url = "http://127.0.0.1:8000/api/quick-scan"
+        
+        try:
+            files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
+            response = http_requests.post(backend_url, files=files, headers=get_auth_headers(), timeout=30)
+            response.raise_for_status()
+            res_data = response.json()
             
-            try:
-                import pypdf
-                reader = pypdf.PdfReader(uploaded_file)
-                extracted = []
-                for i in range(min(5, len(reader.pages))):
-                    text = reader.pages[i].extract_text()
-                    if text:
-                        extracted.append(text)
-                pdf_text_preview = "\n".join(extracted)
-                if not pdf_text_preview.strip():
-                    pdf_text_preview = "[No readable text extracted from PDF]"
-            except Exception as e:
-                pdf_error_occurred = True
+            ds_type = res_data["ds_type"]
+            ds_mod = res_data["ds_mod"]
+            scan_type = res_data["scan_type"]
+            threat_level = res_data["threat_level"]
+            result_summary = res_data["result_summary"]
+            show_fraud_summary = res_data["show_fraud_summary"]
+            total_records = res_data["total_records"]
+            high_risk_count = res_data["high_risk_count"]
+            medium_risk_count = res_data["medium_risk_count"]
+            low_risk_count = res_data["low_risk_count"]
+            pdf_text_preview = res_data["pdf_text_preview"]
+            pdf_error_occurred = res_data["pdf_error"]
+            
+            result_df = pd.DataFrame(res_data["records"])
+            
+            # Database saving logic (excluding PDF previews)
+            if ds_type and ds_mod and not file_name.endswith('.pdf'):
+                if scan_type and result_summary:
+                    scan_id = f"{uploaded_file.name}_{scan_type}_{result_summary}"
+                    if st.session_state.get("last_saved_scan") != scan_id:
+                        try:
+                            from src.utils.database import save_history_scan
+                            save_history_scan(scan_type, uploaded_file.name, result_summary, threat_level)
+                            st.session_state["last_saved_scan"] = scan_id
+                        except Exception as e:
+                            pass
+                            
+        except (http_requests.ConnectionError, http_requests.Timeout):
+            st.markdown("""
+            <div style="background:rgba(255,59,48,0.07);border:1px solid rgba(255,59,48,0.30);
+                        border-left:4px solid #ff3b30;border-radius:14px;padding:18px 22px;
+                        margin:14px 0;font-family:'JetBrains Mono',monospace;font-size:14px;
+                        color:#ff8e8e;">
+                &#x26A0;&#xFE0F;&nbsp;&nbsp;<b>Backend service unavailable.</b><br>
+                <span style="font-size:12px;color:#63768f;">
+                    Ensure the FastAPI server is running at http://127.0.0.1:8000
+                    &nbsp;(<code>uvicorn main:app --reload</code> inside the backend/ folder).
+                </span>
+            </div>
+            """, unsafe_allow_html=True)
+            ds_type = None
+            ds_mod = None
+            result_df = pd.DataFrame()
+            
+        except Exception as e:
+            st.error(f"Error parsing file: {str(e)}")
+            ds_type = None
+            ds_mod = None
+            result_df = pd.DataFrame()
 
-            result_df = pd.DataFrame([
-                {"Metric": "Scan Parameter", "Value": "PDF Threat Analysis"},
-                {"Metric": "File Name", "Value": uploaded_file.name},
-                {"Metric": "Preview Extract Size (chars)", "Value": len(pdf_text_preview) if not pdf_error_occurred else 0}
-            ])
-            result_df["Scan Time"] = scan_time_val
-
-        # Database saving logic (excluding PDF previews)
-        if ds_type and ds_mod and not file_name.endswith('.pdf'):
-            threat_level = "LOW"
-            result_summary = ""
-            scan_type = ""
-
-            if ds_type == "Transaction Dataset":
-                scan_type = "Fraud"
-                if high_risk_count > 0:
-                    threat_level = "HIGH"
-                elif medium_risk_count > 0:
-                    threat_level = "MEDIUM"
-                else:
-                    threat_level = "LOW"
-                result_summary = f"Total Records: {total_records} | High Risk: {high_risk_count} | Medium Risk: {medium_risk_count} | Low Risk: {low_risk_count}"
-
-            elif ds_type == "URL Dataset":
-                scan_type = "URL"
-                susp = int((result_df["Status"] == "SUSPICIOUS").sum())
-                if susp > 0:
-                    threat_level = "HIGH"
-                else:
-                    threat_level = "LOW"
-                result_summary = f"Total URLs: {len(result_df)} | Suspicious: {susp} | Safe: {len(result_df) - susp}"
-
-            elif ds_type == "SMS Dataset":
-                scan_type = "SMS"
-                scam = int((result_df["Prediction"] == "SCAM").sum())
-                if scam > 0:
-                    threat_level = "HIGH"
-                else:
-                    threat_level = "LOW"
-                result_summary = f"Total Messages: {len(result_df)} | Scam: {scam} | Safe: {len(result_df) - scam}"
-
-            elif ds_type == "Employee Dataset":
-                scan_type = "Employee"
-                susp = int((result_df["Risk Level"] == "SUSPICIOUS").sum())
-                if susp > 0:
-                    threat_level = "MEDIUM"
-                else:
-                    threat_level = "LOW"
-                result_summary = f"Total Logs: {len(result_df)} | Suspicious: {susp} | Normal: {len(result_df) - susp}"
-
-            elif ds_type == "SMS Dataset (Plain Text)":
-                scan_type = "TXT"
-                scam = int((result_df["Prediction"] == "SCAM").sum())
-                if scam > 0:
-                    threat_level = "HIGH"
-                else:
-                    threat_level = "LOW"
-                result_summary = f"Total Lines: {len(result_df)} | Scam: {scam} | Safe: {len(result_df) - scam}"
-
-            if scan_type and result_summary:
-                scan_id = f"{uploaded_file.name}_{scan_type}_{result_summary}"
-                if st.session_state.get("last_saved_scan") != scan_id:
-                    try:
-                        from src.utils.database import save_history_scan
-                        save_history_scan(scan_type, uploaded_file.name, result_summary, threat_level)
-                        st.session_state["last_saved_scan"] = scan_id
-                    except Exception as e:
-                        pass
 
         # Display Auto Detection Results
         if ds_type and ds_mod:
@@ -523,5 +424,79 @@ def render_quick_scan():
                         mime="application/pdf",
                         use_container_width=True
                     )
+
+                # ── V4.3 Success notification cards ───────────────────────────
+                st.markdown("""
+                <div style="margin-top:18px;">
+                    <div class="v43-notify v43-notify-success">✅&nbsp;&nbsp;Threat Analysis Completed</div>
+                    <div class="v43-notify v43-notify-info">📄&nbsp;&nbsp;Executive Report Generated</div>
+                    <div class="v43-notify v43-notify-warn">🗂&nbsp;&nbsp;History Updated</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # ── AI Analysis Explainability Card ───────────────────────────
+                if ds_type == "Transaction Dataset":
+                    from src.utils.explainer import _render_ai_card
+                    batch_reasons = []
+                    if high_risk_count > 0:
+                        batch_reasons.append(
+                            f"{high_risk_count} transaction(s) exceeded the ₹20,000 high-risk threshold.")
+                    if medium_risk_count > 0:
+                        batch_reasons.append(
+                            f"{medium_risk_count} transaction(s) triggered medium-risk indicators (unknown location or new device).")
+                    if low_risk_count > 0:
+                        batch_reasons.append(
+                            f"{low_risk_count} transaction(s) were within normal parameters — no anomalies detected.")
+                    if not batch_reasons:
+                        batch_reasons = [f"All {total_records} transactions analysed. No anomalies found."]
+                    _tier = "HIGH" if high_risk_count > 0 else "MEDIUM" if medium_risk_count > 0 else "LOW"
+                    _col  = "#ff3b30" if _tier == "HIGH" else "#ffd60a" if _tier == "MEDIUM" else "#00ff87"
+                    _bg   = ("rgba(255,59,48,0.10)" if _tier == "HIGH"
+                             else "rgba(255,214,10,0.08)" if _tier == "MEDIUM"
+                             else "rgba(0,255,135,0.08)")
+                    _conf = 92 if _tier == "HIGH" else 78 if _tier == "MEDIUM" else 72
+                    _recs = (
+                        ["Freeze flagged transactions immediately.",
+                         "Verify customer identity via secondary authentication.",
+                         "Monitor accounts for repeated anomalies.",
+                         "Escalate to fraud investigation team."]
+                        if _tier == "HIGH" else
+                        ["Place flagged transactions on hold pending review.",
+                         "Request additional verification from customers.",
+                         "Monitor account activity for 24 hours."]
+                        if _tier == "MEDIUM" else
+                        ["All transactions within normal parameters.",
+                         "Continue standard monitoring protocols."]
+                    )
+                    _render_ai_card(batch_reasons, _conf, _recs, _tier, _col, _bg)
+
+                elif ds_type == "URL Dataset":
+                    susp = int((result_df["Status"] == "SUSPICIOUS").sum()) if "Status" in result_df.columns else 0
+                    explain_url_batch(len(result_df), susp)
+
+                elif ds_type in ("SMS Dataset", "SMS Dataset (Plain Text)"):
+                    pred_col = "Prediction" if "Prediction" in result_df.columns else None
+                    scam_cnt = int((result_df[pred_col] == "SCAM").sum()) if pred_col else 0
+                    explain_sms_batch(len(result_df), scam_cnt)
+
+                elif ds_type == "Employee Dataset":
+                    risk_col = "Risk Level" if "Risk Level" in result_df.columns else None
+                    susp_emp = int((result_df[risk_col] == "SUSPICIOUS").sum()) if risk_col else 0
+                    explain_employee_batch(len(result_df), susp_emp)
+
+    else:
+        # ── V4.3 Empty State ──────────────────────────────────────────────────
+        st.markdown("""
+        <div class="v43-empty">
+            <div class="v43-empty-icon">📂</div>
+            <div class="v43-empty-title">No File Uploaded</div>
+            <div class="v43-empty-body">
+                Upload a <b style="color:#8be8ff;">CSV</b>,
+                <b style="color:#8be8ff;">TXT</b> or
+                <b style="color:#8be8ff;">PDF</b> file to begin threat analysis.<br>
+                SentraX AI will auto-detect the dataset type and route<br>it to the appropriate intelligence engine.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
     st.markdown('</div>', unsafe_allow_html=True)
