@@ -48,4 +48,5 @@ async def sync_threat_feeds(
     current_user: Dict[str, Any] = Depends(RoleChecker(["Security Analyst", "Administrator"]))
 ):
     """Simulates executing the background threat feeds sync scheduler."""
-    return ThreatIntelligenceService.sync_feeds()
+    res = ThreatIntelligenceService.sync_feeds()
+    return res

@@ -11,7 +11,6 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from database.base import Base
 from database.connection import DATABASE_URL
 import models.user
-import models.audit_log
 import models.notification
 import models.setting
 import models.threat

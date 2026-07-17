@@ -29,6 +29,10 @@ def init_db():
     )
     """)
 
+    # Performance indexes
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_scans_id_desc ON scans(id DESC)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_scan_history_id_desc ON scan_history(id DESC)")
+
     conn.commit()
     conn.close()
     

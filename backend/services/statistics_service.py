@@ -7,6 +7,13 @@ and analytics datasets from SQLite persistent storage.
 from typing import Dict, Any, List
 from database import get_connection
 from datetime import datetime, timedelta
+import time as _time
+
+# ── In-memory statistics cache ─────────────────────────────────────────────
+_CACHE_TTL = 30  # seconds
+_dashboard_cache = {"data": None, "ts": 0}
+_analytics_cache = {"data": None, "ts": 0}
+_detailed_cache = {"data": None, "ts": 0}
 
 
 class StatisticsService:
@@ -20,6 +27,8 @@ class StatisticsService:
         """
         Aggregate scan metrics for the main SOC dashboard.
         """
+        if _dashboard_cache["data"] is not None and (_time.time() - _dashboard_cache["ts"]) < _CACHE_TTL:
+            return _dashboard_cache["data"]
         metrics = {
             "total_scans": 0,
             "todays_scans": 0,
@@ -107,6 +116,8 @@ class StatisticsService:
         except Exception as e:
             print(f"Error computing dashboard metrics: {e}")
 
+        _dashboard_cache["data"] = metrics
+        _dashboard_cache["ts"] = _time.time()
         return metrics
 
     @staticmethod
@@ -114,6 +125,8 @@ class StatisticsService:
         """
         Aggregate analytics datasets for graphing components.
         """
+        if _analytics_cache["data"] is not None and (_time.time() - _analytics_cache["ts"]) < _CACHE_TTL:
+            return _analytics_cache["data"]
         datasets = {
             "threat_distribution": [],
             "daily_scan_counts": [],
@@ -187,6 +200,8 @@ class StatisticsService:
         except Exception as e:
             print(f"Error computing analytics datasets: {e}")
 
+        _analytics_cache["data"] = datasets
+        _analytics_cache["ts"] = _time.time()
         return datasets
 
     @staticmethod
@@ -195,6 +210,8 @@ class StatisticsService:
         Calculates reusable comprehensive SOC stats for Statistics Service:
         Average, highest, lowest risk, most frequent threats, daily/weekly/monthly totals.
         """
+        if _detailed_cache["data"] is not None and (_time.time() - _detailed_cache["ts"]) < _CACHE_TTL:
+            return _detailed_cache["data"]
         stats = {
             "average_risk": 0.0,
             "highest_risk": 0,
@@ -250,4 +267,14 @@ class StatisticsService:
         except Exception as e:
             print(f"Error computing detailed statistics: {e}")
 
+        _detailed_cache["data"] = stats
+        _detailed_cache["ts"] = _time.time()
         return stats
+
+    @classmethod
+    def clear_cache(cls):
+        """Invalidate all statistics caches when new data is written."""
+        global _dashboard_cache, _analytics_cache, _detailed_cache
+        _dashboard_cache = {"data": None, "ts": 0}
+        _analytics_cache = {"data": None, "ts": 0}
+        _detailed_cache = {"data": None, "ts": 0}

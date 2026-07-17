@@ -277,7 +277,7 @@ def render_quick_scan():
                     ● SCAN PREVIEW — FIRST 5 ROWS
                 </div>
                 """, unsafe_allow_html=True)
-                st.dataframe(result_df.head(5), use_container_width=True, hide_index=True)
+                st.dataframe(result_df.head(5), width="stretch", hide_index=True)
 
             if show_fraud_summary:
                 st.markdown("""
@@ -362,7 +362,7 @@ def render_quick_scan():
                 </div>
                 """, unsafe_allow_html=True)
 
-                st.dataframe(result_df, use_container_width=True, hide_index=True)
+                st.dataframe(result_df, width="stretch", hide_index=True)
 
                 # Generate download payloads
                 csv_data = result_df.to_csv(index=False).encode('utf-8')
@@ -407,14 +407,14 @@ def render_quick_scan():
                     data=csv_data,
                     file_name="quick_scan_report.csv",
                     mime="text/csv",
-                    use_container_width=True
+                    width="stretch"
                 )
                 dl_cols[1].download_button(
                     label="📥 Download TXT",
                     data=txt_bytes,
                     file_name="quick_scan_report.txt",
                     mime="text/plain",
-                    use_container_width=True
+                    width="stretch"
                 )
                 if not file_name.endswith('.pdf') and pdf_success:
                     dl_cols[2].download_button(
@@ -422,7 +422,7 @@ def render_quick_scan():
                         data=pdf_bytes,
                         file_name="executive_threat_report.pdf",
                         mime="application/pdf",
-                        use_container_width=True
+                        width="stretch"
                     )
 
                 # ── V4.3 Success notification cards ───────────────────────────

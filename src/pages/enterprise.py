@@ -100,7 +100,7 @@ def render_enterprise():
             """, unsafe_allow_html=True)
             if st.button(
                 "📡 Fraud Detection API",
-                use_container_width=True
+                width="stretch"
             ):
                 st.session_state.enterprise_page = "api"
                 st.rerun()
@@ -113,7 +113,7 @@ def render_enterprise():
             """, unsafe_allow_html=True)
             if st.button(
                 "🛡️ Employee Monitoring",
-                use_container_width=True
+                width="stretch"
             ):
                 st.session_state.enterprise_page = "employee"
                 st.rerun()
@@ -126,7 +126,7 @@ def render_enterprise():
             """, unsafe_allow_html=True)
             if st.button(
                 "⚡ Scam Filtering",
-                use_container_width=True
+                width="stretch"
             ):
                 st.session_state.enterprise_page = "scam"
                 st.rerun()
@@ -139,7 +139,7 @@ def render_enterprise():
             """, unsafe_allow_html=True)
             if st.button(
                 "🌐 URL Intelligence",
-                use_container_width=True
+                width="stretch"
             ):
                 st.session_state.enterprise_page = "url"
                 st.rerun()
@@ -152,7 +152,7 @@ def render_enterprise():
             """, unsafe_allow_html=True)
             if st.button(
                 "📊 Risk Analytics",
-                use_container_width=True
+                width="stretch"
             ):
                 st.session_state.enterprise_page = "analytics"
                 st.rerun()
@@ -165,7 +165,7 @@ def render_enterprise():
             """, unsafe_allow_html=True)
             if st.button(
                 "🔐 Enterprise Shield",
-                use_container_width=True
+                width="stretch"
             ):
                 st.session_state.enterprise_page = "shield"
                 st.rerun()

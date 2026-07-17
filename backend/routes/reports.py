@@ -17,7 +17,9 @@ async def get_report_json(
     current_user: Dict[str, Any] = Depends(RoleChecker(["Viewer", "Security Analyst", "Administrator"]))
 ):
     """Retrieve full SOC activity metrics in structured JSON format."""
-    return EnterpriseReportingService.get_reporting_data()
+    res = EnterpriseReportingService.get_reporting_data()
+
+    return res
 
 
 @router.get("/csv", summary="Download executive reports summary in CSV format")
@@ -26,6 +28,7 @@ async def get_report_csv(
 ):
     """Generate and download a CSV file of SOC KPI indicators and top threats."""
     csv_data = EnterpriseReportingService.generate_csv_report()
+
     return StreamingResponse(
         io_bytes_from_str(csv_data),
         media_type="text/csv",
@@ -39,6 +42,7 @@ async def get_report_pdf(
 ):
     """Generate and download a formatted PDF threat intelligence executive status summary."""
     pdf_buffer = EnterpriseReportingService.generate_pdf_report()
+
     return StreamingResponse(
         pdf_buffer,
         media_type="application/pdf",

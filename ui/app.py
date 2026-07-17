@@ -13,9 +13,9 @@ from src.pages.quick_scan import render_quick_scan
 from src.pages.dashboard import render_dashboard
 from src.pages.enterprise import render_enterprise
 from src.pages.about import render_about
-from src.pages.assistant import render_copilot
 from src.pages.users import render_users
 from src.pages.threat_intel import render_threat_intel
+from src.pages.profile import render_profile
 
 from src.utils.auth_state import init_auth_session, render_login_page, logout_user
 
@@ -26,7 +26,9 @@ st.set_page_config(
 )
 
 load_styles()
-init_db()
+if "_db_initialized" not in st.session_state:
+    init_db()
+    st.session_state._db_initialized = True
 
 # ── Authentication ─────────────────────────────────────────────────────────────
 init_auth_session()
@@ -34,12 +36,21 @@ if not st.session_state.authenticated:
     render_login_page()
     st.stop()
 
-# ── WebSocket listeners (start once; daemon threads stay alive per session) ────
+# ── WebSocket listeners (start once per session; stored in session_state) ──────
 try:
     from src.utils.websocket_client import AlertListener, DashboardListener, ScanFeedListener
-    _alert_listener   = AlertListener();   _alert_listener.start()
-    _dash_listener    = DashboardListener(); _dash_listener.start()
-    _scan_listener    = ScanFeedListener(); _scan_listener.start()
+    if "_alert_listener" not in st.session_state:
+        st.session_state._alert_listener = AlertListener()
+        st.session_state._alert_listener.start()
+    if "_dash_listener" not in st.session_state:
+        st.session_state._dash_listener = DashboardListener()
+        st.session_state._dash_listener.start()
+    if "_scan_listener" not in st.session_state:
+        st.session_state._scan_listener = ScanFeedListener()
+        st.session_state._scan_listener.start()
+    _alert_listener = st.session_state._alert_listener
+    _dash_listener = st.session_state._dash_listener
+    _scan_listener = st.session_state._scan_listener
     _ws_available = True
 except Exception:
     _ws_available = False
@@ -51,15 +62,19 @@ st.sidebar.title("🛡️ SentraX AI")
 user_role = st.session_state.user.get("role", "Anonymous Analyst")
 
 if user_role == "Administrator":
-    nav_options = ["🏠 Home", "🌐 URL Scanner", "📩 SMS Scanner", "⚡ Quick Scan", "📊 Dashboard", "🏢 Enterprise", "👥 User Management", "🎯 Threat Intelligence", "ℹ️ About"]
+    nav_options = ["🏠 Home", "🌐 URL Scanner", "📩 SMS Scanner", "⚡ Quick Scan", "📊 Dashboard", "🏢 Enterprise", "👥 User Management", "🎯 Threat Intelligence", "👤 Profile", "ℹ️ About"]
 elif user_role == "Security Analyst":
-    nav_options = ["🏠 Home", "🌐 URL Scanner", "📩 SMS Scanner", "⚡ Quick Scan", "📊 Dashboard", "🎯 Threat Intelligence", "ℹ️ About"]
+    nav_options = ["🏠 Home", "🌐 URL Scanner", "📩 SMS Scanner", "⚡ Quick Scan", "📊 Dashboard", "🎯 Threat Intelligence", "👤 Profile", "ℹ️ About"]
 elif user_role == "Viewer":
-    nav_options = ["🏠 Home", "🌐 URL Scanner", "📩 SMS Scanner", "⚡ Quick Scan", "📊 Dashboard", "🎯 Threat Intelligence", "ℹ️ About"]
+    nav_options = ["🏠 Home", "🌐 URL Scanner", "📩 SMS Scanner", "⚡ Quick Scan", "📊 Dashboard", "🎯 Threat Intelligence", "👤 Profile", "ℹ️ About"]
 else:  # Anonymous Analyst fallback
     nav_options = ["🌐 URL Scanner", "📩 SMS Scanner", "⚡ Quick Scan", "ℹ️ About"]
 
-page = st.sidebar.radio("Navigate", nav_options)
+# Initialize or sanitize navigation state
+if "nav_radio" not in st.session_state or st.session_state.nav_radio not in nav_options:
+    st.session_state.nav_radio = nav_options[0]
+
+page = st.sidebar.radio("Navigate", nav_options, key="nav_radio")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown(f"👤 **{st.session_state.user['full_name']}**")
@@ -98,11 +113,10 @@ elif page == "👥 User Management":
     render_users()
 elif page == "🎯 Threat Intelligence":
     render_threat_intel()
+elif page == "👤 Profile":
+    render_profile()
 elif page == "ℹ️ About":
     render_about()
-
-# ── Render Floating AI Copilot globally ───────────────────────────────────────
-render_copilot()
 
 # ── Real-time event processing ────────────────────────────────────────────────
 if _ws_available:
@@ -124,12 +138,8 @@ if _ws_available:
                 icon="🛡️"
             )
 
-    # 2. New scan feed — rerun dashboard to reflect latest data
+    # 2. Dashboard live updates — rerun once if any new data arrived
     new_scans = _scan_listener.get_new_scans()
-    if new_scans and page == "📊 Dashboard":
-        st.rerun()
-
-    # 3. Dashboard KPI updates — rerun if fresh stats arrived while on dashboard
     dash_events = _dash_listener.get_events()
-    if dash_events and page == "📊 Dashboard":
+    if (new_scans or dash_events) and page == "📊 Dashboard":
         st.rerun()

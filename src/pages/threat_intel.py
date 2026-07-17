@@ -67,15 +67,18 @@ def render_threat_intel():
 
     st.markdown("---")
 
+    # Fetch IOC data once and reuse across all widgets
+    iocs_all = fetch_iocs()
+
     # ── Refresh & Export Actions Row ──────────────────────────────────────────
     col_ref, col_exp, _ = st.columns([1, 1, 3])
     with col_ref:
-        if st.button("🔄 Refresh Data", key="btn_refresh_intel", use_container_width=True):
+        if st.button("🔄 Refresh Data", key="btn_refresh_intel", width="stretch"):
             st.rerun()
 
     with col_exp:
         if user_role in ["Security Analyst", "Administrator"]:
-            iocs_data = fetch_iocs()
+            iocs_data = iocs_all
             if iocs_data:
                 export_json = json.dumps(iocs_data, indent=2)
                 st.download_button(
@@ -83,10 +86,10 @@ def render_threat_intel():
                     data=export_json,
                     file_name="sentrax_ioc_watchlist.json",
                     mime="application/json",
-                    use_container_width=True
+                    width="stretch"
                 )
             else:
-                st.button("📥 Export IOC List", disabled=True, use_container_width=True)
+                st.button("📥 Export IOC List", disabled=True, width="stretch")
 
     # ── Add & Import IOCs (Admin Only) ────────────────────────────────────────
     if user_role == "Administrator":
@@ -161,7 +164,7 @@ def render_threat_intel():
 
     # ── Active Watchlist Directory Table ──────────────────────────────────────
     st.markdown("### 📋 Active Watchlist Indicators")
-    iocs = fetch_iocs()
+    iocs = iocs_all
 
     if iocs:
         df = pd.DataFrame(iocs)
@@ -212,7 +215,7 @@ def render_threat_intel():
         
         table_df = display_df[["id", "ioc_type", "value", "Severity Badge", "Confidence %", "source", "description", "status", "created_at"]].copy()
         table_df.columns = ["ID", "Type", "Value", "Severity", "Confidence", "Source", "Description", "Status", "Created Date"]
-        st.dataframe(table_df, use_container_width=True, hide_index=True)
+        st.dataframe(table_df, width="stretch", hide_index=True)
 
         # ── Edit & Delete Console (Admin Only) ────────────────────────────────────
         if user_role == "Administrator":
@@ -257,7 +260,7 @@ def render_threat_intel():
                 with c_del:
                     st.markdown("**Destructive Watchlist Action**")
                     st.warning("Deleting this signature stops active matching alerts immediately.")
-                    if st.button("❌ Permanent Delete Signature", key="btn_del_ioc", use_container_width=True):
+                    if st.button("❌ Permanent Delete Signature", key="btn_del_ioc", width="stretch"):
                         r = requests.delete(f"{BACKEND_URL}/api/ioc/{selected_ioc['id']}", headers=get_auth_headers(), timeout=5)
                         if r.status_code == 200:
                             st.success("Watchlist signature deleted successfully!")
@@ -281,6 +284,6 @@ def render_threat_intel():
         t_table = triggers_df[["timestamp", "user_email", "scanner", "ioc_value", "Severity Badge", "action"]].copy()
         t_table.columns = ["Timestamp", "User Email", "Scanner Module", "Trigger Value", "Threat Severity", "Outcome Action"]
         
-        st.dataframe(t_table, use_container_width=True, hide_index=True)
+        st.dataframe(t_table, width="stretch", hide_index=True)
     else:
         st.info("No threat signatures have triggered matches yet.")

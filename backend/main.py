@@ -5,6 +5,7 @@ Entry point for the FastAPI application.
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.utils import get_openapi
 
 from config import APP_NAME, APP_VERSION, APP_DESCRIPTION
 from database import init_db, log_request
@@ -32,6 +33,36 @@ app = FastAPI(
     redoc_url="/redoc",
     openapi_url="/openapi.json",
 )
+
+
+def custom_openapi():
+    """Override the OpenAPI schema to inject global HTTPBearer security
+    so Swagger UI's Authorize button applies the token to every protected endpoint."""
+    if app.openapi_schema:
+        return app.openapi_schema
+    schema = get_openapi(
+        title=APP_NAME,
+        version=APP_VERSION,
+        description=APP_DESCRIPTION,
+        routes=app.routes,
+    )
+    # Declare the Bearer token security scheme
+    schema.setdefault("components", {})
+    schema["components"]["securitySchemes"] = {
+        "HTTPBearer": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": "Paste your JWT access token (without the 'Bearer ' prefix).",
+        }
+    }
+    # Apply the scheme globally so Swagger sends it on every request
+    schema["security"] = [{"HTTPBearer": []}]
+    app.openapi_schema = schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
 
 @app.on_event("startup")
 def on_startup():
@@ -62,11 +93,12 @@ async def security_middleware(request: Request, call_next):
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
 
-    # 3. Log API requests to database
+    # 3. Log API requests to database (non-blocking background task)
     try:
-        # Exclude static doc files and health checks to keep logs relevant
         if "/api/" in request.url.path:
-            log_request(
+            from starlette.background import BackgroundTask
+            response.background = BackgroundTask(
+                log_request,
                 endpoint=request.url.path,
                 scan_type=request.method,
                 result=f"Status: {response.status_code}"
@@ -92,7 +124,7 @@ app.include_router(fraud.router,            prefix="/api/fraud",      tags=["Fra
 app.include_router(employee.router,         prefix="/api/employee",   tags=["Employee Monitoring"])
 app.include_router(quick_scan.router,       prefix="/api/quick-scan", tags=["Quick Scan"])
 app.include_router(history.router,          prefix="/api/history",    tags=["SOC History"])
-app.include_router(analytics_routes.router, prefix="/api",            tags=["SOC Analytics"])
+app.include_router(analytics_routes.router, prefix="/api/analytics",  tags=["SOC Analytics"])
 app.include_router(export.router,           prefix="/api/export",     tags=["SOC Data Export"])
 app.include_router(monitoring.router,       prefix="/api",            tags=["SOC Health & Monitoring"])
 app.include_router(auth.router,             prefix="/api/auth",       tags=["SOC Authentication"])
@@ -177,7 +209,6 @@ async def websocket_scans_endpoint(websocket: WebSocket):
         manager.disconnect(websocket, channel="scans")
     except Exception:
         manager.disconnect(websocket, channel="scans")
-
 
 @app.get("/ws/status", tags=["WebSocket"])
 async def websocket_status():

@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse
 import io
 import csv
-from database import get_connection, log_audit, cleanup_old_history
+from database import get_connection, cleanup_old_history
 from utils.security import get_current_user, RoleChecker
 from typing import Dict, Any
 
@@ -62,7 +62,6 @@ async def export_csv(
 
     output.seek(0)
     
-    background_tasks.add_task(log_audit, "export", "CSV scan history export generated", user_id=current_user.get("id"))
     background_tasks.add_task(cleanup_old_history)
     
     return StreamingResponse(
@@ -80,7 +79,6 @@ async def export_pdf(
     """
     Generate and return an Executive PDF threat report from actual database records.
     """
-    background_tasks.add_task(log_audit, "export", "PDF SOC threat report generated", user_id=current_user.get("id"))
     background_tasks.add_task(cleanup_old_history)
 
     buffer = io.BytesIO()

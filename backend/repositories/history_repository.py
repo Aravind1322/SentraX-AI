@@ -97,6 +97,14 @@ class HistoryRepository:
         ))
 
         self.db.commit()
+
+        # Invalidate statistics cache after new scan insertion
+        try:
+            from services.statistics_service import StatisticsService
+            StatisticsService.clear_cache()
+        except Exception:
+            pass
+
         return history
 
     def get_by_id(self, scan_id: int) -> Optional[ScanHistory]:

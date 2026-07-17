@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
 import json
-from database import get_connection, log_audit
+from database import get_connection
 from utils.security import get_current_user, RoleChecker
 
 router = APIRouter()
@@ -86,8 +86,6 @@ async def update_settings(
                 cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('retention_period', ?)", (settings_update.retention_period,))
                 
             conn.commit()
-            log_audit("settings_update", "SOC parameters modified", user_id=current_user.get("id"))
-            
             return {"message": "Settings updated successfully"}
             
     except Exception as e:

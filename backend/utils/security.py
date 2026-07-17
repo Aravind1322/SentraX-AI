@@ -8,7 +8,10 @@ import bcrypt
 from datetime import datetime, timedelta
 from typing import Dict, Any, Optional
 from fastapi import Header, HTTPException, status, Depends
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from database import get_connection
+
+security_scheme = HTTPBearer(auto_error=False)
 
 SECRET_KEY = "changeme-before-production"
 ALGORITHM = "HS256"
@@ -57,14 +60,18 @@ def decode_token(token: str) -> Optional[Dict[str, Any]]:
 
 # ── Dependency injection helpers for FastAPI routes ───────────────────────────
 
-async def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[str, Any]:
+async def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security_scheme)
+) -> Dict[str, Any]:
     """
     FastAPI dependency to extract and validate the authenticated user.
     If no authorization header is provided, it falls back to an anonymous viewer/analyst context
     to preserve 100% compatibility with the existing Streamlit frontend.
     """
+    raw_token = credentials.credentials if credentials else None
+
     # 1. Fallback for anonymous Streamlit calls to preserve compatibility
-    if not authorization:
+    if not credentials or not raw_token:
         return {
             "id": None,
             "email": "anonymous@sentrax.ai",
@@ -73,22 +80,9 @@ async def get_current_user(authorization: Optional[str] = Header(None)) -> Dict[
             "is_anonymous": True
         }
 
-    # 2. Extract Token
-    try:
-        parts = authorization.split()
-        if len(parts) != 2 or parts[0].lower() != "bearer":
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid authorization header format"
-            )
-        token = parts[1]
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid authorization header format"
-        )
+    token = raw_token
 
-    # 3. Decode & Validate Token
+    # 2. Decode & Validate Token
     payload = decode_token(token)
     if not payload or payload.get("type") != "access":
         raise HTTPException(
@@ -151,21 +145,24 @@ class RoleChecker:
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Authentication required"
             )
-            
-        # Role levels hierarchy
-        role_hierarchy = {"Anonymous Analyst": 0, "Viewer": 1, "Security Analyst": 2, "Administrator": 3}
+
         user_role = current_user.get("role", "Anonymous Analyst")
-        user_level = role_hierarchy.get(user_role, 1)
 
-        # Check if the user meets any of the allowed roles or higher levels
-        max_allowed_level = max([role_hierarchy.get(r, 1) for r in self.allowed_roles])
-        
-        # If user meets required role or exceeds it, let it pass
-        if user_level >= max_allowed_level:
-            return current_user
+        # Explicit direct hierarchy validation:
+        # - Administrator passes Administrator, Security Analyst, Viewer, and Anonymous Analyst
+        # - Security Analyst passes Security Analyst, Viewer, and Anonymous Analyst
+        # - Viewer passes Viewer and Anonymous Analyst
+        # - Anonymous Analyst passes Anonymous Analyst only
+        role_permissions = {
+            "Administrator": {"Administrator", "Security Analyst", "Viewer", "Anonymous Analyst"},
+            "Security Analyst": {"Security Analyst", "Viewer", "Anonymous Analyst"},
+            "Viewer": {"Viewer", "Anonymous Analyst"},
+            "Anonymous Analyst": {"Anonymous Analyst"}
+        }
 
-        # Strict check
-        if user_role in self.allowed_roles:
+        user_allowed_targets = role_permissions.get(user_role, {"Anonymous Analyst"})
+
+        if any(r in user_allowed_targets for r in self.allowed_roles):
             return current_user
 
         raise HTTPException(

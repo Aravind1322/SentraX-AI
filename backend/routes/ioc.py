@@ -3,12 +3,11 @@ SentraX AI Backend — routes/ioc.py
 Endpoints for managing Indicators of Compromise (IOC) signatures, metrics, and triggers.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from typing import Dict, Any, List
 from services.ioc_service import IOCService
 from utils.security import get_current_user, RoleChecker
-from database import log_audit
 
 router = APIRouter()
 
@@ -26,7 +25,6 @@ class IOCRequest(BaseModel):
 @router.post("", summary="Create an IOC signature record (Admin only)")
 async def add_ioc(
     request: IOCRequest,
-    req_meta: Request,
     current_user: Dict[str, Any] = Depends(RoleChecker(["Administrator"]))
 ):
     """Adds a new Indicator of Compromise signature."""
@@ -39,13 +37,6 @@ async def add_ioc(
         description=request.description,
         status=request.status
     )
-    if "error" not in res:
-        log_audit(
-            "ioc_added",
-            f"Administrator ({current_user['email']}) added {request.ioc_type} IOC: '{request.value}'",
-            user_id=current_user.get("id"),
-            ip_address=req_meta.client.host
-        )
     return res
 
 
@@ -53,7 +44,6 @@ async def add_ioc(
 async def update_ioc(
     ioc_id: int,
     request: IOCRequest,
-    req_meta: Request,
     current_user: Dict[str, Any] = Depends(RoleChecker(["Administrator"]))
 ):
     """Updates an existing Indicator of Compromise signature."""
@@ -72,12 +62,6 @@ async def update_ioc(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"IOC signature with ID {ioc_id} not found"
         )
-    log_audit(
-        "ioc_updated",
-        f"Administrator ({current_user['email']}) updated {request.ioc_type} IOC ID {ioc_id} to '{request.value}'",
-        user_id=current_user.get("id"),
-        ip_address=req_meta.client.host
-    )
     return {"message": "IOC signature updated successfully"}
 
 
@@ -92,7 +76,6 @@ async def list_iocs(
 @router.delete("/{ioc_id}", summary="Delete an IOC record (Admin only)")
 async def remove_ioc(
     ioc_id: int,
-    req_meta: Request,
     current_user: Dict[str, Any] = Depends(RoleChecker(["Administrator"]))
 ):
     """Removes an active Indicator of Compromise signature from watchlist."""
@@ -102,19 +85,12 @@ async def remove_ioc(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"IOC signature with ID {ioc_id} not found"
         )
-    log_audit(
-        "ioc_deleted",
-        f"Administrator ({current_user['email']}) deleted IOC record ID {ioc_id}",
-        user_id=current_user.get("id"),
-        ip_address=req_meta.client.host
-    )
     return {"message": f"IOC signature {ioc_id} deleted successfully"}
 
 
 @router.post("/import", summary="Import a batch list of IOCs (Admin only)")
 async def import_iocs(
     request: List[IOCRequest],
-    req_meta: Request,
     current_user: Dict[str, Any] = Depends(RoleChecker(["Administrator"]))
 ):
     """Imports multiple IOC signatures."""
@@ -131,29 +107,15 @@ async def import_iocs(
         )
         if "error" not in res:
             imported_count += 1
-
-    log_audit(
-        "ioc_imported",
-        f"Administrator ({current_user['email']}) imported {imported_count} IOC signatures",
-        user_id=current_user.get("id"),
-        ip_address=req_meta.client.host
-    )
     return {"message": f"Successfully imported {imported_count} IOC signatures"}
 
 
 @router.get("/export", summary="Export IOC signature records")
 async def export_iocs(
-    req_meta: Request,
     current_user: Dict[str, Any] = Depends(RoleChecker(["Security Analyst", "Administrator"]))
 ):
     """Exports all IOC signature records as a downloadable payload."""
     records = IOCService.get_all_iocs()
-    log_audit(
-        "ioc_exported",
-        f"User ({current_user['email']}) exported threat intelligence IOC signatures list",
-        user_id=current_user.get("id"),
-        ip_address=req_meta.client.host
-    )
     return records
 
 

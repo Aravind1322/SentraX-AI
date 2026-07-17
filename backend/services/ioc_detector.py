@@ -8,7 +8,7 @@ import asyncio
 import logging
 from datetime import datetime
 from typing import Dict, Any, Optional
-from database import get_connection, log_audit
+from database import get_connection
 
 _logger = logging.getLogger("backend")
 
@@ -17,7 +17,7 @@ async def check_and_trigger_ioc_alert(scan_type: str, scanned_value: str, curren
     """
     Look up scanned_value in ioc_records.
     If match found:
-      - Log "IOC Triggered" audit event.
+      - Record matching event to ioc_triggers.
       - Record the match in `ioc_triggers` history table.
       - Insert a new security alert into `alerts` if a duplicate Unacknowledged alert doesn't already exist.
       - Broadcast alert over WS channel `alerts`.
@@ -68,12 +68,6 @@ async def check_and_trigger_ioc_alert(scan_type: str, scanned_value: str, curren
         severity = match["severity"].upper()
         source = match["source"]
         description = match["description"]
-        
-        # Log audit immediately (handles opening and closing connection itself)
-        log_audit(
-            "ioc_triggered",
-            f"IOC signature '{ioc_value}' (ID: {ioc_id}) triggered by {scan_type} scan: {scanned_value}"
-        )
         
         dup_count = 0
         with get_connection() as conn:

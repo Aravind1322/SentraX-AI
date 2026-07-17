@@ -3,13 +3,13 @@ SentraX AI Backend — routes/admin.py
 Endpoints for system administrators to view system diagnostic statistics.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field, EmailStr
 from typing import Dict, Any, List
 import os
 from datetime import datetime
 from config import DATABASE_PATH
-from database import get_connection, log_audit
+from database import get_connection
 from utils.security import get_current_user, RoleChecker, hash_password
 from routes.monitoring import START_TIME
 
@@ -96,7 +96,6 @@ async def list_users(
 async def update_user_role(
     user_id: int,
     request: UpdateRoleRequest,
-    req_meta: Request,
     current_user: Dict[str, Any] = Depends(RoleChecker(["Administrator"]))
 ):
     new_role = request.role
@@ -138,13 +137,6 @@ async def update_user_role(
 
             cursor.execute("UPDATE users SET role = ? WHERE id = ?", (new_role, user_id))
             conn.commit()
-
-            log_audit(
-                "admin_role_change",
-                f"Administrator ({current_user['email']}) changed role of {target['email']} to {new_role}",
-                user_id=current_user["id"],
-                ip_address=req_meta.client.host
-            )
             return {"message": "User role updated successfully"}
     except HTTPException:
         raise
@@ -159,7 +151,6 @@ async def update_user_role(
 async def update_user_status(
     user_id: int,
     request: UpdateStatusRequest,
-    req_meta: Request,
     current_user: Dict[str, Any] = Depends(RoleChecker(["Administrator"]))
 ):
     new_status = request.is_active
@@ -203,12 +194,6 @@ async def update_user_status(
             conn.commit()
 
             action_str = "activated" if new_status == 1 else "deactivated"
-            log_audit(
-                f"admin_account_{action_str}",
-                f"Administrator ({current_user['email']}) {action_str} account for {target['email']}",
-                user_id=current_user["id"],
-                ip_address=req_meta.client.host
-            )
             return {"message": f"User account {action_str} successfully"}
     except HTTPException:
         raise
@@ -223,7 +208,6 @@ async def update_user_status(
 async def reset_user_password(
     user_id: int,
     request: ResetPasswordRequest,
-    req_meta: Request,
     current_user: Dict[str, Any] = Depends(RoleChecker(["Administrator"]))
 ):
     try:
@@ -240,13 +224,6 @@ async def reset_user_password(
             hashed_pw = hash_password(request.password)
             cursor.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hashed_pw, user_id))
             conn.commit()
-
-            log_audit(
-                "admin_password_reset",
-                f"Administrator ({current_user['email']}) reset password for user {target['email']}",
-                user_id=current_user["id"],
-                ip_address=req_meta.client.host
-            )
             return {"message": "User password reset successfully"}
     except HTTPException:
         raise
@@ -257,15 +234,114 @@ async def reset_user_password(
         )
 
 
-@router.get("/users/{user_id}/audit", summary="Get user audit history (Admin only)")
-async def get_user_audit(
-    user_id: int,
+
+
+
+class CreateUserRequest(BaseModel):
+    full_name: str = Field(..., min_length=1, example="Jane Doe")
+    email: EmailStr = Field(..., example="jane@sentrax.ai")
+    password: str = Field(..., min_length=8, example="SecretPassword123")
+    confirm_password: str = Field(..., min_length=8, example="SecretPassword123")
+    role: str = Field("Security Analyst", example="Security Analyst")
+    is_active: int = Field(1, example=1)
+
+
+class EditUserRequest(BaseModel):
+    full_name: str = Field(..., min_length=1, example="Jane Doe")
+    role: str = Field(..., example="Security Analyst")
+    is_active: int = Field(..., example=1)
+
+
+@router.post("/users", summary="Create a new user (Admin only)")
+async def create_user(
+    request: CreateUserRequest,
     current_user: Dict[str, Any] = Depends(RoleChecker(["Administrator"]))
 ):
+    if request.password != request.confirm_password:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Passwords do not match"
+        )
+    if request.role not in ["Administrator", "Security Analyst", "Viewer"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid role specified"
+        )
+    if request.is_active not in [0, 1]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid status specified"
+        )
+
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT email FROM users WHERE id = ?", (user_id,))
+            cursor.execute("SELECT id FROM users WHERE email = ?", (request.email,))
+            if cursor.fetchone():
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Email is already registered"
+                )
+
+            hashed_pw = hash_password(request.password)
+            cursor.execute(
+                """
+                INSERT INTO users (full_name, email, password_hash, role, is_active)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (request.full_name, request.email, hashed_pw, request.role, request.is_active)
+            )
+            conn.commit()
+            new_id = cursor.lastrowid
+            return {
+                "message": "User created successfully",
+                "id": new_id,
+                "email": request.email,
+                "role": request.role
+            }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to create user: {str(e)}"
+        )
+
+
+@router.put("/users/{user_id}", summary="Edit user details (Admin only)")
+async def edit_user(
+    user_id: int,
+    request: EditUserRequest,
+    current_user: Dict[str, Any] = Depends(RoleChecker(["Administrator"]))
+):
+    if request.role not in ["Administrator", "Security Analyst", "Viewer"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid role specified"
+        )
+    if request.is_active not in [0, 1]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid status specified"
+        )
+
+    # Prevent Administrator from removing their own Administrator role or status
+    if user_id == current_user["id"]:
+        if request.role != "Administrator":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="You cannot remove your own Administrator role"
+            )
+        if request.is_active != 1:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="You cannot deactivate your own account"
+            )
+
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT email, role, is_active FROM users WHERE id = ?", (user_id,))
             target = cursor.fetchone()
             if not target:
                 raise HTTPException(
@@ -273,22 +349,60 @@ async def get_user_audit(
                     detail="User not found"
                 )
 
-            email_pattern = f"%{target['email']}%"
+            # Prevent last active admin downgrade or deactivation
+            if target["role"] == "Administrator" and (request.role != "Administrator" or request.is_active == 0):
+                cursor.execute("SELECT COUNT(*) FROM users WHERE role = 'Administrator' AND is_active = 1")
+                admin_count = cursor.fetchone()[0]
+                if admin_count <= 1:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="This is the last active Administrator. Changes to role/status are prohibited."
+                    )
+
             cursor.execute(
-                """
-                SELECT id, event_type, details, timestamp, ip_address 
-                FROM audit_logs 
-                WHERE user_id = ? OR details LIKE ? 
-                ORDER BY timestamp DESC LIMIT 50
-                """,
-                (user_id, email_pattern)
+                "UPDATE users SET full_name = ?, role = ?, is_active = ? WHERE id = ?",
+                (request.full_name, request.role, request.is_active, user_id)
             )
-            rows = cursor.fetchall()
-            return [dict(r) for r in rows]
+            conn.commit()
+            return {"message": "User details updated successfully"}
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to fetch user audit logs: {str(e)}"
+            detail=f"Failed to edit user: {str(e)}"
+        )
+
+
+@router.delete("/users/{user_id}", summary="Delete a user (Admin only)")
+async def delete_user(
+    user_id: int,
+    current_user: Dict[str, Any] = Depends(RoleChecker(["Administrator"]))
+):
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT email, role FROM users WHERE id = ?", (user_id,))
+            target = cursor.fetchone()
+            if not target:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User not found"
+                )
+
+            if target["role"] == "Administrator":
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Administrator accounts can never be deleted"
+                )
+
+            cursor.execute("DELETE FROM users WHERE id = ?", (user_id,))
+            conn.commit()
+            return {"message": "User deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to delete user: {str(e)}"
         )

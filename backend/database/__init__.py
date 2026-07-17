@@ -84,6 +84,7 @@ def init_db() -> None:
                 )
             """)
 
+
             # Notifications table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS notifications (
@@ -286,6 +287,20 @@ def init_db() -> None:
                 )
             """)
 
+            # ── Performance Indexes ────────────────────────────────────────────
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_scan_history_timestamp ON scan_history(timestamp DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_scan_history_scan_type ON scan_history(scan_type)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_scan_details_scan_id ON scan_details(scan_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_scan_details_created_at ON scan_details(created_at DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_scan_reasons_detail_id ON scan_reasons(scan_detail_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_technical_metrics_detail_id ON technical_metrics(scan_detail_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_recommendations_detail_id ON recommendations(scan_detail_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_scan_metadata_detail_id ON scan_metadata(scan_detail_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_alerts_timestamp ON alerts(timestamp DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_notifications_timestamp ON notifications(timestamp DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_api_request_log_created_at ON api_request_log(created_at DESC)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)")
+
             # Seed default Threat Feeds if empty
             cursor.execute("SELECT COUNT(*) FROM threat_feeds")
             if cursor.fetchone()[0] == 0:
@@ -474,31 +489,6 @@ def save_scan(
         print(f"Error delegating save_scan: {e}")
 
 
-# ── Audit Logging helper ──────────────────────────────────────────────────────
-
-def log_audit(
-    event_type: str,
-    details: str,
-    user_id: int = None,
-    ip_address: str = None
-) -> None:
-    import logging
-    logger = logging.getLogger("audit")
-    logger.info(f"Event: {event_type} | Details: {details} | UserID: {user_id} | IP: {ip_address}")
-
-    try:
-        with get_connection() as conn:
-            conn.execute(
-                """
-                INSERT INTO audit_logs (event_type, details, user_id, ip_address)
-                VALUES (?, ?, ?, ?)
-                """,
-                (event_type, details, user_id, ip_address),
-            )
-            conn.commit()
-    except Exception as e:
-        err_logger = logging.getLogger("errors")
-        err_logger.error(f"Database error in log_audit: {e}")
 
 
 def create_notification(
@@ -542,5 +532,12 @@ def cleanup_old_history() -> None:
             cursor.execute("DELETE FROM scan_history WHERE timestamp < ?", (cutoff,))
             conn.commit()
             print(f"Database cleanup executed: cleared logs older than {cutoff}")
+
+            # Invalidate statistics cache after purging old records
+            try:
+                from services.statistics_service import StatisticsService
+                StatisticsService.clear_cache()
+            except Exception:
+                pass
     except Exception as e:
         print(f"Database error in cleanup_old_history: {e}")

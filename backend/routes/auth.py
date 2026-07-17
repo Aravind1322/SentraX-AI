@@ -3,13 +3,14 @@ SentraX AI Backend — routes/auth.py
 Endpoints for JWT-based user authentication, login, registration, logout, and token refresh.
 """
 
-from fastapi import APIRouter, HTTPException, Depends, status, Request
+from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel, EmailStr, Field
 from typing import Dict, Any, Optional
-from database import get_connection, log_audit
+from database import get_connection
 from utils.security import (
     hash_password, verify_password,
-    create_access_token, create_refresh_token, decode_token
+    create_access_token, create_refresh_token, decode_token,
+    get_current_user
 )
 
 router = APIRouter()
@@ -32,7 +33,7 @@ class TokenRefreshRequest(BaseModel):
 
 
 @router.post("/register", summary="Register a new enterprise user")
-async def register_user(request: RegisterRequest, req_meta: Request):
+async def register_user(request: RegisterRequest):
     """
     Creates a new multi-user profile with secure bcrypt password hashing.
     By default, registers users under Security Analyst role.
@@ -47,7 +48,6 @@ async def register_user(request: RegisterRequest, req_meta: Request):
             cursor = conn.cursor()
             cursor.execute("SELECT id FROM users WHERE email = ?", (request.email,))
             if cursor.fetchone():
-                log_audit("auth_fail", f"Registration failed: email {request.email} already exists", ip_address=req_meta.client.host)
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Email address is already registered"
@@ -63,10 +63,6 @@ async def register_user(request: RegisterRequest, req_meta: Request):
                 (request.full_name, request.email, password_hash, role)
             )
             conn.commit()
-            
-            user_id = cursor.lastrowid
-            log_audit("user_registration", f"Created user {request.email} with role {role}", user_id=user_id, ip_address=req_meta.client.host)
-
             return {
                 "message": "User registered successfully",
                 "email": request.email,
@@ -83,7 +79,7 @@ async def register_user(request: RegisterRequest, req_meta: Request):
 
 
 @router.post("/login", summary="Login to obtain access and refresh tokens")
-async def login_user(request: LoginRequest, req_meta: Request):
+async def login_user(request: LoginRequest):
     """
     Authenticates email & password. Returns short-lived access token and
     long-lived refresh token.
@@ -97,14 +93,12 @@ async def login_user(request: LoginRequest, req_meta: Request):
             )
             row = cursor.fetchone()
             if not row or not verify_password(request.password, row["password_hash"]):
-                log_audit("auth_fail", f"Failed login attempt for email {request.email}", ip_address=req_meta.client.host)
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Incorrect email or password"
                 )
 
             if not row["is_active"]:
-                log_audit("auth_fail", f"Suspended account login attempt: {request.email}", user_id=row["id"], ip_address=req_meta.client.host)
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Account is suspended"
@@ -123,8 +117,6 @@ async def login_user(request: LoginRequest, req_meta: Request):
                 (current_time, row["id"])
             )
             conn.commit()
-
-            log_audit("login", f"Successful login for {request.email}", user_id=row["id"], ip_address=req_meta.client.host)
 
             return {
                 "access_token": access_token,
@@ -147,11 +139,10 @@ async def login_user(request: LoginRequest, req_meta: Request):
 
 
 @router.post("/logout", summary="Logout user")
-async def logout_user(req_meta: Request):
+async def logout_user():
     """
-    Invalidates session and logs logout action to the audit logs.
+    Invalidates session.
     """
-    log_audit("logout", "User session ended", ip_address=req_meta.client.host)
     return {"message": "Logged out successfully"}
 
 
@@ -179,3 +170,76 @@ async def refresh_token(request: TokenRefreshRequest):
         "access_token": access_token,
         "token_type": "bearer"
     }
+
+
+class ChangeOwnPasswordRequest(BaseModel):
+    current_password: str = Field(..., example="OldPassword123")
+    new_password: str = Field(..., min_length=8, example="NewPassword123")
+
+
+@router.get("/me", summary="Get current user profile")
+async def get_own_profile(
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    if current_user.get("is_anonymous"):
+        return current_user
+
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT id, full_name, email, role, is_active, created_at, last_login FROM users WHERE id = ?",
+                (current_user["id"],)
+            )
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="User profile not found"
+                )
+            return dict(row)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to fetch profile: {str(e)}"
+        )
+
+
+@router.post("/change-password", summary="Change own password")
+async def change_own_password(
+    request: ChangeOwnPasswordRequest,
+    current_user: Dict[str, Any] = Depends(get_current_user)
+):
+    if current_user.get("is_anonymous"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Anonymous users cannot change passwords"
+        )
+
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT password_hash FROM users WHERE id = ?", (current_user["id"],))
+            row = cursor.fetchone()
+            if not row or not verify_password(request.current_password, row["password_hash"]):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Incorrect current password"
+                )
+
+            hashed_pw = hash_password(request.new_password)
+            cursor.execute("UPDATE users SET password_hash = ? WHERE id = ?", (hashed_pw, current_user["id"]))
+            conn.commit()
+            return {"message": "Password changed successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to change password: {str(e)}"
+        )
+
+
+

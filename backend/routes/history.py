@@ -205,35 +205,27 @@ async def get_history_statistics(
         with get_connection() as conn:
             cursor = conn.cursor()
 
-            # Total scans
-            cursor.execute("SELECT COUNT(*) FROM scan_history")
-            stats["total_scans"] = cursor.fetchone()[0] or 0
-
-            if stats["total_scans"] > 0:
-                # Threat level breakdowns
-                cursor.execute("SELECT threat_level, COUNT(*) FROM scan_history GROUP BY threat_level")
-                for row in cursor.fetchall():
-                    lvl = row[0].upper()
-                    cnt = row[1]
-                    if lvl == "LOW" or lvl == "SAFE":
-                        stats["safe"] += cnt
-                    elif lvl == "MEDIUM" or lvl == "MODERATE" or lvl == "SUSPICIOUS":
-                        stats["medium"] += cnt
-                    elif lvl == "HIGH":
-                        stats["high"] += cnt
-                    elif lvl == "CRITICAL":
-                        stats["critical"] += cnt
-
-                # Include scans >= 90 score as Critical
-                cursor.execute("SELECT COUNT(*) FROM scan_history WHERE score >= 90")
-                stats["critical"] = cursor.fetchone()[0] or 0
-
-                # Averages
-                cursor.execute("SELECT AVG(score), AVG(confidence) FROM scan_history")
-                avg_row = cursor.fetchone()
-                if avg_row:
-                    stats["average_score"] = round(avg_row[0] or 0.0, 2)
-                    stats["average_confidence"] = round(avg_row[1] or 0.0, 2)
+            # Total scans + threat breakdown + averages in one query
+            cursor.execute("""
+                SELECT 
+                    COUNT(*) as total,
+                    SUM(CASE WHEN threat_level = 'LOW' OR threat_level = 'SAFE' THEN 1 ELSE 0 END) as safe,
+                    SUM(CASE WHEN threat_level IN ('MEDIUM', 'MODERATE', 'SUSPICIOUS') THEN 1 ELSE 0 END) as medium,
+                    SUM(CASE WHEN threat_level = 'HIGH' THEN 1 ELSE 0 END) as high,
+                    SUM(CASE WHEN score >= 90 THEN 1 ELSE 0 END) as critical,
+                    AVG(score) as avg_score,
+                    AVG(confidence) as avg_confidence
+                FROM scan_history
+            """)
+            agg = cursor.fetchone()
+            if agg and agg[0] > 0:
+                stats["total_scans"] = agg[0]
+                stats["safe"] = agg[1] or 0
+                stats["medium"] = agg[2] or 0
+                stats["high"] = agg[3] or 0
+                stats["critical"] = agg[4] or 0
+                stats["average_score"] = round(agg[5] or 0.0, 2)
+                stats["average_confidence"] = round(agg[6] or 0.0, 2)
 
                 # Most common reasons
                 cursor.execute("SELECT reason, COUNT(*) as cnt FROM scan_reasons GROUP BY reason ORDER BY cnt DESC LIMIT 5")
@@ -296,28 +288,26 @@ async def get_normalized_history(
     from fastapi import HTTPException
     
     summary = None
-    try:
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT * FROM scan_history WHERE id = ?", (scan_id,))
-            row = cursor.fetchone()
-            if row:
-                summary = dict(row)
-    except Exception as e:
-        print(f"Error reading scan_history: {e}")
-    
-    if not summary:
-        raise HTTPException(status_code=404, detail="Scan record not found")
-    
     details = {}
     reasons = []
     technical = {}
     recommendations = []
     metadata = {}
-    
+
     try:
         with get_connection() as conn:
             cursor = conn.cursor()
+
+            # Fetch scan summary
+            cursor.execute("SELECT * FROM scan_history WHERE id = ?", (scan_id,))
+            row = cursor.fetchone()
+            if row:
+                summary = dict(row)
+
+            if not summary:
+                raise HTTPException(status_code=404, detail="Scan record not found")
+
+            # Fetch scan details and related data
             cursor.execute("SELECT * FROM scan_details WHERE scan_id = ?", (scan_id,))
             det_row = cursor.fetchone()
             if det_row:
@@ -363,6 +353,8 @@ async def get_normalized_history(
                     "engine_name": "SentraX AI Engine",
                     "engine_version": "v1.0"
                 }
+    except HTTPException:
+        raise
     except Exception as e:
         print(f"Error fetching normalized data: {e}")
         

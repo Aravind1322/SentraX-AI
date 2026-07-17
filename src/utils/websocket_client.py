@@ -206,3 +206,4 @@ class ScanFeedListener(_BaseListener):
 
     def get_new_scans(self) -> List[Dict[str, Any]]:
         return self.get_events()
+

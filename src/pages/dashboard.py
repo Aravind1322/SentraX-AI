@@ -16,6 +16,7 @@ from src.utils.database import get_recent_scans, get_history_scans
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
+@st.cache_data(ttl=30)
 def _load_data() -> pd.DataFrame:
     """Pull all scans from the database and return a clean DataFrame."""
     rows = get_recent_scans(limit=200)
@@ -539,14 +540,14 @@ def render_dashboard():
         with chart_col:
             trend = _chart_threat_trend(df)
             if trend:
-                st.altair_chart(trend, use_container_width=True)
+                st.altair_chart(trend, width="stretch")
             else:
                 st.info("Not enough date variation to render trend. Scan more URLs over multiple days.")
 
         with donut_col:
             donut = _chart_donut(df)
             if donut:
-                st.altair_chart(donut, use_container_width=True)
+                st.altair_chart(donut, width="stretch")
 
         # ── Score distribution + Hourly activity ─────────────────────────────────
         st.markdown(
@@ -558,12 +559,12 @@ def render_dashboard():
         with dist_col:
             dist = _chart_score_distribution(df)
             if dist:
-                st.altair_chart(dist, use_container_width=True)
+                st.altair_chart(dist, width="stretch")
 
         with hour_col:
             hourly = _chart_hourly_heatmap(df)
             if hourly:
-                st.altair_chart(hourly, use_container_width=True)
+                st.altair_chart(hourly, width="stretch")
 
         # ── Top risky URLs ────────────────────────────────────────────────────────
         st.markdown(
@@ -573,7 +574,7 @@ def render_dashboard():
 
         top_chart = _chart_top_risky(df)
         if top_chart:
-            st.altair_chart(top_chart, use_container_width=True)
+            st.altair_chart(top_chart, width="stretch")
 
         # ── Recent Alert Timeline ─────────────────────────────────────────────────
         st.markdown(
@@ -605,7 +606,7 @@ def render_dashboard():
             display_df["Risk Score"] = display_df["Risk Score"].astype(str) + " / 100"
             st.dataframe(
                 display_df,
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
 
@@ -650,7 +651,7 @@ def render_dashboard():
             """, unsafe_allow_html=True)
             chart1 = _chart_history_threat_distribution(history_df)
             if chart1:
-                st.altair_chart(chart1, use_container_width=True)
+                st.altair_chart(chart1, width="stretch")
                 
         with cg2:
             st.markdown("""
@@ -660,7 +661,7 @@ def render_dashboard():
             """, unsafe_allow_html=True)
             chart2 = _chart_history_scan_type_distribution(history_df)
             if chart2:
-                st.altair_chart(chart2, use_container_width=True)
+                st.altair_chart(chart2, width="stretch")
                 
         with cg3:
             st.markdown("""
@@ -670,7 +671,7 @@ def render_dashboard():
             """, unsafe_allow_html=True)
             chart3 = _chart_history_activity_trend(history_df)
             if chart3:
-                st.altair_chart(chart3, use_container_width=True)
+                st.altair_chart(chart3, width="stretch")
 
     # ── RECENT SCAN HISTORY ───────────────────────────────────────────────────
     st.markdown(
@@ -732,10 +733,10 @@ def render_dashboard():
                     data=csv_payload,
                     file_name=f"scan_history_{filter_val.lower()}.csv",
                     mime="text/csv",
-                    use_container_width=True
+                    width="stretch"
                 )
             else:
-                st.button("📥 Export History CSV", disabled=True, use_container_width=True, help="No records available to export.")
+                st.button("📥 Export History CSV", disabled=True, width="stretch", help="No records available to export.")
                 st.markdown("<p style='font-size:11px;color:#ff3b30;margin-top:4px;text-align:center;'>No records available to export.</p>", unsafe_allow_html=True)
 
         # Render Table
