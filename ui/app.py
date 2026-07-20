@@ -4,7 +4,6 @@ import streamlit as st
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from src.utils.database import init_db
-st.caption("Frontend Build v2 - July 20")
 
 from src.components.styles import load_styles
 from src.pages.home import render_home
