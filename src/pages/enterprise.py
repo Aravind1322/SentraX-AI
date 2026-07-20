@@ -3,10 +3,7 @@ import pandas as pd
 import requests as http_requests
 from src.utils.detector import predict_url, predict_sms, score_fraud_row, get_fraud_status
 from src.utils.database import get_recent_scans
-from src.utils.auth_state import get_auth_headers
-
-# Backend base URL
-_BACKEND_URL = "http://127.0.0.1:8000"
+from src.utils.auth_state import get_auth_headers, BACKEND_URL as _BACKEND_URL
 
 
 def _call_backend_fraud(amount: float, location: str, device: str, api_key: str):
@@ -242,8 +239,7 @@ def render_enterprise():
                             color:#ff8e8e;">
                     &#x26A0;&#xFE0F;&nbsp;&nbsp;<b>Backend service unavailable.</b><br>
                     <span style="font-size:12px;color:#63768f;">
-                        Ensure the FastAPI server is running at http://127.0.0.1:8000
-                        &nbsp;(<code>uvicorn main:app --reload</code> inside the backend/ folder).
+                        Please try again later.
                     </span>
                 </div>
                 """, unsafe_allow_html=True)

@@ -9,9 +9,7 @@ import requests
 import random
 import string
 import time
-from src.utils.auth_state import get_auth_headers
-
-BACKEND_URL = "http://127.0.0.1:8000"
+from src.utils.auth_state import get_auth_headers, BACKEND_URL
 
 
 def get_users() -> list:

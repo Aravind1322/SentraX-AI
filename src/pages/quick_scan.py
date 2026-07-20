@@ -170,9 +170,9 @@ def render_quick_scan():
         pdf_text_preview = ""
 
         import requests as http_requests
-        from src.utils.auth_state import get_auth_headers
+        from src.utils.auth_state import get_auth_headers, BACKEND_URL
 
-        backend_url = "http://127.0.0.1:8000/api/quick-scan"
+        backend_url = f"{BACKEND_URL}/api/quick-scan"
         
         try:
             files = {"file": (uploaded_file.name, uploaded_file.getvalue(), uploaded_file.type)}
@@ -215,8 +215,7 @@ def render_quick_scan():
                         color:#ff8e8e;">
                 &#x26A0;&#xFE0F;&nbsp;&nbsp;<b>Backend service unavailable.</b><br>
                 <span style="font-size:12px;color:#63768f;">
-                    Ensure the FastAPI server is running at http://127.0.0.1:8000
-                    &nbsp;(<code>uvicorn main:app --reload</code> inside the backend/ folder).
+                    Please try again later.
                 </span>
             </div>
             """, unsafe_allow_html=True)

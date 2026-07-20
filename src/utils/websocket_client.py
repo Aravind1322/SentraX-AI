@@ -21,7 +21,15 @@ import json
 import time
 from typing import Any, Dict, List, Optional
 
-_WS_BASE = "ws://127.0.0.1:8000"
+from src.utils.auth_state import BACKEND_URL as _HTTP_BACKEND
+
+# Derive WebSocket base from the centralized HTTP backend URL
+if _HTTP_BACKEND.startswith("https://"):
+    _WS_BASE = "wss://" + _HTTP_BACKEND[len("https://"):]
+elif _HTTP_BACKEND.startswith("http://"):
+    _WS_BASE = "ws://" + _HTTP_BACKEND[len("http://"):]
+else:
+    _WS_BASE = "ws://127.0.0.1:8000"
 
 
 # ── Base listener class ────────────────────────────────────────────────────────

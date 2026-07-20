@@ -11,7 +11,26 @@ import re
 from typing import Optional, Dict, Any
 
 ENABLE_DEV_BYPASS = os.getenv("ENABLE_DEV_BYPASS", "False").lower() == "true"
-BACKEND_URL = "https://sentrax-ai-6vqu.onrender.com"
+
+
+def _resolve_backend_url() -> str:
+    """Resolve the backend URL from Streamlit secrets, environment variable, or fallback."""
+    # 1. Streamlit Secrets (highest priority — used by Streamlit Cloud)
+    try:
+        url = st.secrets.get("BACKEND_URL")
+        if url:
+            return url.rstrip("/")
+    except Exception:
+        pass
+    # 2. OS environment variable (used by Docker / Render / local dev overrides)
+    env_url = os.getenv("BACKEND_URL")
+    if env_url:
+        return env_url.rstrip("/")
+    # 3. Local development fallback
+    return "http://127.0.0.1:8000"
+
+
+BACKEND_URL = _resolve_backend_url()
 
 
 def init_auth_session():
@@ -73,7 +92,7 @@ def login_user(email: str, password: str) -> bool:
                 detail = resp.text or "Login failed"
             st.error(f"Authentication failed: {detail}")
     except requests.ConnectionError:
-        st.error("Cannot reach backend. Ensure the FastAPI server is running at http://127.0.0.1:8000")
+        st.error("Backend service unavailable. Please try again later.")
     except Exception as e:
         st.error(f"Login error: {e}")
     return False
