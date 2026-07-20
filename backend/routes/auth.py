@@ -53,6 +53,15 @@ async def register_user(request: RegisterRequest):
                     detail="Email address is already registered"
                 )
 
+            # Debug logging variables before insert
+            from config import SENTRAX_DEBUG, DATABASE_PATH
+            if SENTRAX_DEBUG:
+                import os
+                cursor.execute("SELECT COUNT(*) FROM users")
+                users_before = cursor.fetchone()[0]
+                cursor.execute("PRAGMA database_list")
+                db_list = cursor.fetchall()
+
             # Insert user
             password_hash = hash_password(request.password)
             cursor.execute(
@@ -62,7 +71,23 @@ async def register_user(request: RegisterRequest):
                 """,
                 (request.full_name, request.email, password_hash, role)
             )
+            new_id = cursor.lastrowid
             conn.commit()
+
+            if SENTRAX_DEBUG:
+                cursor.execute("SELECT COUNT(*) FROM users")
+                users_after = cursor.fetchone()[0]
+                db_size = os.path.getsize(DATABASE_PATH) if os.path.exists(DATABASE_PATH) else 0
+                print("[DEBUG AUTH] USER REGISTERED VIA API:")
+                print(f"  Resolved database path: {DATABASE_PATH}")
+                print(f"  Absolute database path: {os.path.abspath(DATABASE_PATH)}")
+                print(f"  PRAGMA database_list: {db_list}")
+                print(f"  Total users before insert: {users_before}")
+                print(f"  Inserted user ID: {new_id}")
+                print(f"  Commit success: Yes")
+                print(f"  Total users after insert: {users_after}")
+                print(f"  Database file size: {db_size} bytes")
+
             return {
                 "message": "User registered successfully",
                 "email": request.email,
@@ -92,13 +117,33 @@ async def login_user(request: LoginRequest):
                 (request.email,)
             )
             row = cursor.fetchone()
+            
+            # Debug logging helper variables
+            from config import SENTRAX_DEBUG, DATABASE_PATH
+            user_found = "Yes" if row else "No"
+            matched_id = row["id"] if row else None
+            auth_success = "Failure"
+            login_update_success = "No"
+
             if not row or not verify_password(request.password, row["password_hash"]):
+                if SENTRAX_DEBUG:
+                    print("[DEBUG AUTH] LOGIN ATTEMPT:")
+                    print(f"  Database path: {DATABASE_PATH}")
+                    print(f"  User found: {user_found}")
+                    print(f"  Matched ID: {matched_id}")
+                    print(f"  Authentication result: {auth_success}")
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Incorrect email or password"
                 )
 
             if not row["is_active"]:
+                if SENTRAX_DEBUG:
+                    print("[DEBUG AUTH] LOGIN ATTEMPT (SUSPENDED):")
+                    print(f"  Database path: {DATABASE_PATH}")
+                    print(f"  User found: {user_found}")
+                    print(f"  Matched ID: {matched_id}")
+                    print(f"  Authentication result: {auth_success}")
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="Account is suspended"
@@ -108,6 +153,7 @@ async def login_user(request: LoginRequest):
             user_payload = {"sub": request.email, "role": row["role"], "id": row["id"]}
             access_token = create_access_token(user_payload)
             refresh_token = create_refresh_token(user_payload)
+            auth_success = "Success"
 
             # Update last login
             from datetime import datetime
@@ -117,6 +163,15 @@ async def login_user(request: LoginRequest):
                 (current_time, row["id"])
             )
             conn.commit()
+            login_update_success = "Yes" if conn.total_changes > 0 else "No"
+
+            if SENTRAX_DEBUG:
+                print("[DEBUG AUTH] LOGIN ATTEMPT:")
+                print(f"  Database path: {DATABASE_PATH}")
+                print(f"  User found: {user_found}")
+                print(f"  Matched ID: {matched_id}")
+                print(f"  Authentication result: {auth_success}")
+                print(f"  Last login update success: {login_update_success}")
 
             return {
                 "access_token": access_token,

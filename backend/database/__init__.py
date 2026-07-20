@@ -26,10 +26,42 @@ def get_connection():
 
 def init_db() -> None:
     """
-    Create backend-specific tables if they do not already exist.
-    These are separate from the existing Streamlit scan-history database.
+    Create backend-specific tables if they do not already exist,
+    run safe schema migrations on scan_history, and print diagnostics.
     """
+    import os
+    from config import HOST, PORT, DATABASE_PATH
+
+    # 1. Startup Diagnostics Print
+    backend_url = os.environ.get("BACKEND_URL", f"http://{HOST}:{PORT}")
+    db_exists = os.path.exists(DATABASE_PATH)
+    db_size = os.path.getsize(DATABASE_PATH) if db_exists else 0
+    
+    # We open a temporary connection just to check version
     try:
+        temp_conn = sqlite3.connect(DATABASE_PATH)
+        db_version = temp_conn.execute("select sqlite_version()").fetchone()[0]
+        temp_conn.close()
+    except Exception:
+        db_version = "Unknown"
+
+    print("="*60)
+    print("SENTRAX STARTUP DIAGNOSTICS")
+    print("="*60)
+    print(f"Backend URL: {backend_url}")
+    print(f"Resolved DATABASE_PATH: {DATABASE_PATH}")
+    print(f"Absolute database path: {os.path.abspath(DATABASE_PATH)}")
+    print(f"Database exists: {'Yes' if db_exists else 'No'}")
+    print(f"Database size: {db_size} bytes")
+    print(f"Database version: {db_version}")
+    print("="*60)
+
+    try:
+        # Create parent directories if missing
+        db_dir = os.path.dirname(DATABASE_PATH)
+        if db_dir:
+            os.makedirs(db_dir, exist_ok=True)
+
         with get_connection() as conn:
             cursor = conn.cursor()
 
@@ -44,19 +76,78 @@ def init_db() -> None:
                 )
             """)
 
-            # Persistent scan history table
+            # scans table (for Streamlit dashboard)
             cursor.execute("""
-                CREATE TABLE IF NOT EXISTS scan_history (
-                    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-                    scan_type    TEXT NOT NULL,
-                    input_data   TEXT NOT NULL,
-                    score        INTEGER NOT NULL,
-                    label        TEXT NOT NULL,
-                    threat_level TEXT NOT NULL,
-                    confidence   INTEGER NOT NULL,
-                    timestamp    DATETIME DEFAULT CURRENT_TIMESTAMP
+                CREATE TABLE IF NOT EXISTS scans (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    url TEXT,
+                    label TEXT,
+                    score INTEGER,
+                    timestamp TEXT
                 )
             """)
+
+            # 2. scan_history table inspection and migration
+            cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scan_history'")
+            table_exists = cursor.fetchone() is not None
+
+            if not table_exists:
+                # Create with full unified schema
+                cursor.execute("""
+                    CREATE TABLE scan_history (
+                        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+                        scan_type      TEXT NOT NULL,
+                        input_data     TEXT,
+                        score          INTEGER DEFAULT 0,
+                        label          TEXT DEFAULT 'Safe',
+                        threat_level   TEXT NOT NULL,
+                        confidence     INTEGER DEFAULT 100,
+                        timestamp      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        filename       TEXT,
+                        result_summary TEXT,
+                        scan_time      TEXT
+                    )
+                """)
+                print("[INIT DB] Created scan_history table with full unified schema.")
+            else:
+                # Inspect columns
+                cursor.execute("PRAGMA table_info(scan_history)")
+                existing_cols = {row[1] for row in cursor.fetchall()}
+                
+                required_cols = {
+                    "scan_type": "TEXT NOT NULL DEFAULT 'web_scan'",
+                    "input_data": "TEXT",
+                    "score": "INTEGER DEFAULT 0",
+                    "label": "TEXT DEFAULT 'Safe'",
+                    "threat_level": "TEXT NOT NULL DEFAULT 'LOW'",
+                    "confidence": "INTEGER DEFAULT 100",
+                    "timestamp": "DATETIME DEFAULT CURRENT_TIMESTAMP",
+                    "filename": "TEXT",
+                    "result_summary": "TEXT",
+                    "scan_time": "TEXT"
+                }
+                
+                missing_cols = {name: definition for name, definition in required_cols.items() if name not in existing_cols}
+                
+                if missing_cols:
+                    # Count rows before migration
+                    cursor.execute("SELECT COUNT(*) FROM scan_history")
+                    rows_before = cursor.fetchone()[0]
+                    
+                    print(f"[INIT DB] scan_history table exists. Missing columns: {list(missing_cols.keys())}. Performing migration...")
+                    
+                    for col_name, col_def in missing_cols.items():
+                        cursor.execute(f"ALTER TABLE scan_history ADD COLUMN {col_name} {col_def}")
+                        print(f"  Added column: {col_name} {col_def}")
+                    
+                    # Count rows after migration
+                    cursor.execute("SELECT COUNT(*) FROM scan_history")
+                    rows_after = cursor.fetchone()[0]
+                    
+                    if rows_before != rows_after:
+                        raise RuntimeError(f"Database integrity warning! Rows mismatch before ({rows_before}) and after ({rows_after}) migration. Aborting transaction.")
+                    
+                    print(f"[INIT DB] Schema migration completed successfully. Preserved {rows_after} rows.")
 
             # Users table
             cursor.execute("""

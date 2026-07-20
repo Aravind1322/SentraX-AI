@@ -17,3 +17,10 @@ scratch/
 # Cache
 .pytest_cache/
 .streamlit/cache/
+backend/sentrax_backend.db
+data/sentrax.db
+data/sentrax.db.bak
+
+*.db
+*.db-journal
+*.db.bak

@@ -1,10 +1,28 @@
 import sqlite3
+import os
 from datetime import datetime
 
-DB_PATH = "data/sentrax.db"
+def get_database_path() -> str:
+    """Always returns the canonical absolute path of backend/sentrax_backend.db."""
+    env_path = os.environ.get("SENTRAX_DB_PATH")
+    if env_path:
+        return os.path.abspath(env_path)
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "backend", "sentrax_backend.db"))
+
+DB_PATH = get_database_path()
 
 
 def init_db():
+    # Ensure the parent directory exists
+    db_dir = os.path.dirname(DB_PATH)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
+    # Legacy DB file path for migration
+    legacy_db = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "sentrax.db"))
+    legacy_exists = os.path.exists(legacy_db)
+
+    # Connect to unified DB
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
@@ -20,20 +38,83 @@ def init_db():
 
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS scan_history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        scan_time TEXT,
-        scan_type TEXT,
-        filename TEXT,
+        id             INTEGER PRIMARY KEY AUTOINCREMENT,
+        scan_type      TEXT NOT NULL,
+        input_data     TEXT,
+        score          INTEGER DEFAULT 0,
+        label          TEXT DEFAULT 'Safe',
+        threat_level   TEXT NOT NULL,
+        confidence     INTEGER DEFAULT 100,
+        timestamp      DATETIME DEFAULT CURRENT_TIMESTAMP,
+        filename       TEXT,
         result_summary TEXT,
-        threat_level TEXT
+        scan_time      TEXT
     )
     """)
 
     # Performance indexes
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_scans_id_desc ON scans(id DESC)")
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_scan_history_id_desc ON scan_history(id DESC)")
-
     conn.commit()
+
+    # If legacy DB exists, run safe schema migration
+    if legacy_exists:
+        try:
+            print(f"[FRONTEND DB] Found legacy database at {legacy_db}. Migrating records...")
+            legacy_conn = sqlite3.connect(legacy_db)
+            legacy_cursor = legacy_conn.cursor()
+
+            # Migrate scans
+            try:
+                legacy_cursor.execute("SELECT url, label, score, timestamp FROM scans")
+                legacy_scans = legacy_cursor.fetchall()
+                if legacy_scans:
+                    cursor.execute("SELECT url, timestamp FROM scans")
+                    existing_scans = {(r[0], r[1]) for r in cursor.fetchall()}
+                    new_scans = [s for s in legacy_scans if (s[0], s[3]) not in existing_scans]
+                    if new_scans:
+                        cursor.executemany(
+                            "INSERT INTO scans (url, label, score, timestamp) VALUES (?, ?, ?, ?)",
+                            new_scans
+                        )
+                        print(f"[FRONTEND DB] Migrated {len(new_scans)} new scans.")
+            except Exception as e:
+                print(f"Error migrating legacy scans table: {e}")
+
+            # Migrate scan_history
+            try:
+                legacy_cursor.execute("SELECT scan_time, scan_type, filename, result_summary, threat_level FROM scan_history")
+                legacy_history = legacy_cursor.fetchall()
+                if legacy_history:
+                    cursor.execute("SELECT scan_time, filename FROM scan_history")
+                    existing_history = {(r[0], r[1]) for r in cursor.fetchall()}
+                    new_history = [h for h in legacy_history if (h[0], h[2]) not in existing_history]
+                    if new_history:
+                        cursor.executemany(
+                            """
+                            INSERT INTO scan_history (scan_time, scan_type, filename, result_summary, threat_level, input_data, score, label, confidence)
+                            VALUES (?, ?, ?, ?, ?, ?, 0, 'Safe', 100)
+                            """,
+                            [(h[0], h[1], h[2], h[3], h[4], h[2]) for h in new_history]
+                        )
+                        print(f"[FRONTEND DB] Migrated {len(new_history)} new scan_history records.")
+            except Exception as e:
+                print(f"Error migrating legacy scan_history table: {e}")
+
+            legacy_conn.close()
+            conn.commit()
+
+            # Rename legacy DB so we don't try to migrate it again
+            try:
+                if os.path.exists(legacy_db + ".bak"):
+                    os.remove(legacy_db + ".bak")
+                os.rename(legacy_db, legacy_db + ".bak")
+                print(f"[FRONTEND DB] Renamed legacy database to {legacy_db}.bak")
+            except Exception as rename_err:
+                print(f"Error renaming legacy database: {rename_err}")
+        except Exception as mig_err:
+            print(f"Error during legacy database migration: {mig_err}")
+
     conn.close()
     
     migrate_existing_html_records()
@@ -84,9 +165,9 @@ def save_history_scan(scan_type, filename, result_summary, threat_level):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
-    INSERT INTO scan_history (scan_time, scan_type, filename, result_summary, threat_level)
-    VALUES (?, ?, ?, ?, ?)
-    """, (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), scan_type, filename, result_summary, threat_level))
+    INSERT INTO scan_history (scan_time, scan_type, filename, result_summary, threat_level, input_data)
+    VALUES (?, ?, ?, ?, ?, ?)
+    """, (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), scan_type, filename, result_summary, threat_level, filename))
     conn.commit()
     conn.close()
 

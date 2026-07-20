@@ -25,11 +25,15 @@ APP_DESCRIPTION = (
 )
 
 # ── Database ───────────────────────────────────────────────────────────────────
-# Placeholder path. Update to point at the production DB when connecting.
-DATABASE_PATH = os.environ.get(
-    "SENTRAX_DB_PATH",
-    os.path.join(os.path.dirname(__file__), "sentrax_backend.db"),
-)
+def get_database_path() -> str:
+    """Always returns the canonical absolute path of backend/sentrax_backend.db."""
+    env_path = os.environ.get("SENTRAX_DB_PATH")
+    if env_path:
+        return os.path.abspath(env_path)
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "sentrax_backend.db"))
+
+DATABASE_PATH = get_database_path()
+SENTRAX_DEBUG = os.environ.get("SENTRAX_DEBUG", "True").lower() == "true"
 
 # ── Server ─────────────────────────────────────────────────────────────────────
 HOST = os.environ.get("SENTRAX_HOST", "0.0.0.0")

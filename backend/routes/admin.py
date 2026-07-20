@@ -283,6 +283,15 @@ async def create_user(
                     detail="Email is already registered"
                 )
 
+            # Debug logging variables before insert
+            from config import SENTRAX_DEBUG, DATABASE_PATH
+            if SENTRAX_DEBUG:
+                import os
+                cursor.execute("SELECT COUNT(*) FROM users")
+                users_before = cursor.fetchone()[0]
+                cursor.execute("PRAGMA database_list")
+                db_list = cursor.fetchall()
+
             hashed_pw = hash_password(request.password)
             cursor.execute(
                 """
@@ -291,8 +300,23 @@ async def create_user(
                 """,
                 (request.full_name, request.email, hashed_pw, request.role, request.is_active)
             )
-            conn.commit()
             new_id = cursor.lastrowid
+            conn.commit()
+
+            if SENTRAX_DEBUG:
+                cursor.execute("SELECT COUNT(*) FROM users")
+                users_after = cursor.fetchone()[0]
+                db_size = os.path.getsize(DATABASE_PATH) if os.path.exists(DATABASE_PATH) else 0
+                print("[DEBUG AUTH] USER REGISTERED VIA ADMIN:")
+                print(f"  Resolved database path: {DATABASE_PATH}")
+                print(f"  Absolute database path: {os.path.abspath(DATABASE_PATH)}")
+                print(f"  PRAGMA database_list: {db_list}")
+                print(f"  Total users before insert: {users_before}")
+                print(f"  Inserted user ID: {new_id}")
+                print(f"  Commit success: Yes")
+                print(f"  Total users after insert: {users_after}")
+                print(f"  Database file size: {db_size} bytes")
+
             return {
                 "message": "User created successfully",
                 "id": new_id,
