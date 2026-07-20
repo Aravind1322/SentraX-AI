@@ -2,19 +2,67 @@ import sqlite3
 import os
 from datetime import datetime
 
-def get_database_path() -> str:
-    """Always returns the canonical absolute path of backend/sentrax_backend.db."""
-    env_path = os.environ.get("SENTRAX_DB_PATH")
-    if env_path:
-        return os.path.abspath(env_path)
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "backend", "sentrax_backend.db"))
+_LOGGED_STARTUP = False
 
-DB_PATH = get_database_path()
+def get_database_path() -> str:
+    """
+    Dynamically resolve the database path.
+    1. Checks the SENTRAX_DB_PATH environment variable.
+    2. Checks if backend/sentrax_backend.db exists.
+    3. Falls back to data/sentrax_backend.db.
+    """
+    global _LOGGED_STARTUP
+    env_path = os.environ.get("SENTRAX_DB_PATH")
+    
+    if env_path:
+        resolved_path = os.path.abspath(env_path)
+        is_env = True
+        is_backend = False
+        is_fallback = False
+    else:
+        is_env = False
+        backend_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "backend", "sentrax_backend.db"))
+        if os.path.exists(backend_path):
+            resolved_path = backend_path
+            is_backend = True
+            is_fallback = False
+        else:
+            resolved_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "sentrax_backend.db"))
+            is_backend = False
+            is_fallback = True
+
+    # Ensure parent directory exists
+    parent_dir = os.path.dirname(resolved_path)
+    created_dir = False
+    if parent_dir and not os.path.exists(parent_dir):
+        os.makedirs(parent_dir, exist_ok=True)
+        created_dir = True
+
+    if not _LOGGED_STARTUP:
+        db_exists = os.path.exists(resolved_path)
+        print(f"Resolved database path: {resolved_path}")
+        print(f"Database exists: {'Yes' if db_exists else 'No'}")
+        if created_dir:
+            print(f"Creating data directory: {parent_dir}")
+        else:
+            print("Creating data directory: No (already exists)")
+        
+        if is_env:
+            print(f"Using environment database: {resolved_path}")
+        elif is_backend:
+            print("Using backend database: Yes")
+        elif is_fallback:
+            print("Using fallback data database: Yes")
+            
+        _LOGGED_STARTUP = True
+
+    return resolved_path
 
 
 def init_db():
+    db_path = get_database_path()
     # Ensure the parent directory exists
-    db_dir = os.path.dirname(DB_PATH)
+    db_dir = os.path.dirname(db_path)
     if db_dir:
         os.makedirs(db_dir, exist_ok=True)
 
@@ -23,7 +71,7 @@ def init_db():
     legacy_exists = os.path.exists(legacy_db)
 
     # Connect to unified DB
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
     cursor.execute("""
@@ -123,7 +171,7 @@ def init_db():
 
 def migrate_existing_html_records():
     import re
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_database_path())
     cursor = conn.cursor()
     
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scan_history'")
@@ -162,18 +210,18 @@ def save_history_scan(scan_type, filename, result_summary, threat_level):
     # Strip any HTML tags to ensure only clean plain-text is saved
     if result_summary:
         result_summary = re.sub(r'<[^>]+>', '', str(result_summary))
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_database_path())
     cursor = conn.cursor()
     cursor.execute("""
-    INSERT INTO scan_history (scan_time, scan_type, filename, result_summary, threat_level, input_data)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO scan_history (scan_time, scan_type, filename, result_summary, threat_level, input_data, score, label, confidence)
+    VALUES (?, ?, ?, ?, ?, ?, 0, 'Safe', 100)
     """, (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), scan_type, filename, result_summary, threat_level, filename))
     conn.commit()
     conn.close()
 
 
 def get_history_scans(limit=100):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_database_path())
     cursor = conn.cursor()
     cursor.execute("""
     SELECT scan_time, scan_type, filename, result_summary, threat_level
@@ -188,7 +236,7 @@ def get_history_scans(limit=100):
 
 def migrate_existing_html_scans():
     import re
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_database_path())
     cursor = conn.cursor()
     
     cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='scans'")
@@ -234,7 +282,7 @@ def save_scan(url, label, score):
         url = re.sub(r'<[^>]+>', '', str(url))
     if label:
         label = re.sub(r'<[^>]+>', '', str(label))
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_database_path())
     cursor = conn.cursor()
 
     cursor.execute("""
@@ -247,7 +295,7 @@ def save_scan(url, label, score):
 
 
 def get_recent_scans(limit=10):
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(get_database_path())
     cursor = conn.cursor()
 
     cursor.execute("""
