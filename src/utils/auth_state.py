@@ -11,7 +11,7 @@ import re
 from typing import Optional, Dict, Any
 
 ENABLE_DEV_BYPASS = os.getenv("ENABLE_DEV_BYPASS", "False").lower() == "true"
-BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
+BACKEND_URL = "https://sentrax-ai-6vqu.onrender.com"
 
 
 def init_auth_session():
