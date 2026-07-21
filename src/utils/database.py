@@ -6,10 +6,11 @@ _LOGGED_STARTUP = False
 
 def get_database_path() -> str:
     """
-    Dynamically resolve the database path.
+    Dynamically resolve the database path for the Streamlit frontend.
     1. Checks the SENTRAX_DB_PATH environment variable.
-    2. Checks if backend/sentrax_backend.db exists.
-    3. Falls back to data/sentrax_backend.db.
+    2. During deployment, avoids reading/writing backend/sentrax_backend.db.
+    3. Detects if running locally and backend/sentrax_backend.db exists.
+    4. Falls back to data/sentrax_backend.db for a local Streamlit-only database.
     """
     global _LOGGED_STARTUP
     env_path = os.environ.get("SENTRAX_DB_PATH")
@@ -21,8 +22,21 @@ def get_database_path() -> str:
         is_fallback = False
     else:
         is_env = False
+        
+        # Detect if we are in a deployment environment (Streamlit Cloud, Render, etc.)
+        # These runtime platforms expose specific key environment indicators.
+        is_deployed = (
+            "STREAMLIT_SHARING_API_KEY" in os.environ or
+            os.environ.get("HOME") == "/home/appuser" or
+            os.environ.get("STREAMLIT_RUNTIME_ENV") is not None or
+            os.environ.get("RENDER") is not None
+        )
+        
         backend_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "backend", "sentrax_backend.db"))
-        if os.path.exists(backend_path):
+        
+        # To avoid lock issues on deployment servers where the backend dir may be read-only,
+        # never attempt to open backend/sentrax_backend.db unless in local development.
+        if not is_deployed and os.path.exists(backend_path):
             resolved_path = backend_path
             is_backend = True
             is_fallback = False
@@ -31,7 +45,7 @@ def get_database_path() -> str:
             is_backend = False
             is_fallback = True
 
-    # Ensure parent directory exists
+    # Ensure parent directory exists before returning or connecting
     parent_dir = os.path.dirname(resolved_path)
     created_dir = False
     if parent_dir and not os.path.exists(parent_dir):

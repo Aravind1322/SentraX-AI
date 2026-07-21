@@ -27,6 +27,12 @@ st.set_page_config(
 st.caption("Frontend Build v2 - July 20")
 
 load_styles()
+# ── Database Initialization ────────────────────────────────────────────────────
+# The frontend requires a local database to store metrics, history, and URL scans.
+# In a deployment environment (like Streamlit Cloud or Render), the database path 
+# must resolve to a writable local workspace (like data/sentrax_backend.db).
+# The frontend must NOT attempt to initialize the backend database (backend/sentrax_backend.db) 
+# as that file and folder may be read-only, leading to sqlite3.OperationalError database lock issues.
 if "_db_initialized" not in st.session_state:
     init_db()
     st.session_state._db_initialized = True

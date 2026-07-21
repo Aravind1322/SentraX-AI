@@ -161,8 +161,8 @@ def render_login_page():
         col1, col2, col3 = st.columns([1, 2, 1])
         with col2:
             with st.form("login_form"):
-                email = st.text_input("Security Email", value="admin@sentrax.ai")
-                password = st.text_input("Security Password", type="password", value="Admin@123")
+                email = st.text_input("Security Email", placeholder="Enter your email")
+                password = st.text_input("Security Password", type="password", placeholder="Enter your password")
                 submit = st.form_submit_button("Authenticate Session")
 
                 if submit:
